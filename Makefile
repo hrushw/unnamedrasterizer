@@ -6,7 +6,7 @@ game: main.c
 
 run:
 	./game
-	magick convert gaem.ppm gaem.png
+	convert gaem.ppm gaem.png
 
 clean:
 	rm -f game *.o
