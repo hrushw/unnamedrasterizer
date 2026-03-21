@@ -56,6 +56,12 @@ void fb_draw_parabola(Fbuf *fb, Rect bound, Vec2 origin, uint32_t a, Color clr) 
 				fb_set_pix(fb, r, clr);
 }
 
+
+uint32_t det(Vec2 v0, Vec2 v1){
+	return v0.x*v1.y - v0.y*v1.x; 
+}
+
+
 enum { WIDTH = 640 };
 enum { HEIGHT = 480 };
 
