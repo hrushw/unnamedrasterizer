@@ -4,7 +4,7 @@ CFLAGS=-Wall -Wextra -Wvla -Wpedantic
 game: main.c
 	$(CC) $(CFLAGS) -o game main.c
 
-run:
+run: game
 	./game
 	convert gaem.ppm gaem.png
 
