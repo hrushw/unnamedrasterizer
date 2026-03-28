@@ -49,6 +49,11 @@ void fb_set_pix(Fbuf *fb, Vec2 r, Color clr) {
 	fb->buf[index + 2] = clr.b;
 }
 
+Color fb_get_pix(Fbuf *fb, Vec2 r) {
+	size_t index = 3*(r.y*fb->sz.x + r.x);
+	return (Color) { fb->buf[index], fb->buf[index+1], fb->buf[index+2] };
+}
+
 void fb_draw_rect(Fbuf *fb, Rect S, Color clr) {
 	Vec2 r;
 	for(r.y = S.r0.y; r.y < S.r0.y + S.sz.y; ++r.y)
@@ -144,6 +149,20 @@ void fb_draw_triangle(Fbuf *fb, Rect bound, Triangle S, Vec3Color colors) {
 				fb_set_pix(fb, r, lerp(B, colors));
 }
 
+void ximgsetpix(Vec2 r, Color clr, XImage *img) {
+	size_t i = 4*(r.y*img->width + r.x);
+	img->data[i  ] = clr.b;
+	img->data[i+1] = clr.g;
+	img->data[i+2] = clr.r;
+}
+
+void fbtoximg(Fbuf *fb, XImage *img) {
+	Vec2 r;
+	for(r.y = 0; r.y < fb->sz.y; ++r.y)
+		for(r.x = 0; r.x < fb->sz.x; ++r.x)
+			ximgsetpix(r, fb_get_pix(fb, r), img);
+}
+
 enum { WIDTH = 640 };
 enum { HEIGHT = 480 };
 
@@ -190,18 +209,16 @@ void render_to_ppm(Fbuf *fb) {
 	fwrite(fb->buf, 1, WIDTH*HEIGHT*3, f);
 }
 
-void render_to_x(Fbuf *fb) {
+int render_to_x(Fbuf *fb) {
 	Display *disp = XOpenDisplay(NULL);
 	Window root = DefaultRootWindow(disp);
-	Screen *screen = DefaultScreenOfDisplay(disp);
 	int scrnu = DefaultScreen(disp);
 	unsigned long blackpix = BlackPixel(disp, scrnu);
-	unsigned long whitepix = WhitePixel(disp, scrnu);
 	GC gc = DefaultGC(disp, scrnu);
 
-	int defdepth = DefaultDepth(disp, scrnu);
-	Colormap defcmap = DefaultColormap(disp, scrnu);
-	Visual *defvis = DefaultVisual(disp, scrnu);
+	XVisualInfo vinfo = {0};
+	if(!XMatchVisualInfo(disp, scrnu, 24, TrueColor, &vinfo))
+		return fprintf(stderr, "Unable to get proper visual!\n"), -1;
 
 	XSetWindowAttributes xswattrs = {0};
 	xswattrs.background_pixel = blackpix;
@@ -211,7 +228,7 @@ void render_to_x(Fbuf *fb) {
 		disp, root,
 		0, 0, WIDTH, HEIGHT,
 		0, 24, InputOutput,
-		defvis /*change*/, CWEventMask | CWBackPixel, &xswattrs
+		vinfo.visual /*change*/, CWEventMask | CWBackPixel, &xswattrs
 	);
 	XMapWindow(disp, win);
 	XSync(disp, False);
@@ -219,39 +236,38 @@ void render_to_x(Fbuf *fb) {
 	XWindowAttributes attrs = {0};
 	XGetWindowAttributes(disp, win, &attrs);
 
-	char* buf = malloc(4*WIDTH*HEIGHT);
-	for(size_t i = 0; i < 4*WIDTH*HEIGHT; ++i) buf[i] = 0;
-	for(int y = 100; y < 200; ++y)
-		for(int x = 100; x < 200; ++x)
-			buf[4*(WIDTH*y + x) + 2] = 0xFF;
-
-	XImage *img = XCreateImage(disp, attrs.visual, attrs.depth, ZPixmap, 0, buf, WIDTH, HEIGHT, 32, 0);
+	uint8_t* buf = calloc(4*fb->sz.y*fb->sz.x, 1);
+	XImage *img = XCreateImage(disp, attrs.visual, attrs.depth, ZPixmap, 0, (char*)buf, WIDTH, HEIGHT, 32, 0);
+	fbtoximg(fb, img);
 	XInitImage(img);
-	XPutImage(disp, win, gc, img, 0, 0, 0, 0, WIDTH, HEIGHT);
-
-	(void)fb;
-	(void)screen;
-	(void)whitepix;
-	(void)gc;
-	(void)defdepth;
-	(void)defcmap;
+	if(
+		img->bits_per_pixel != 32
+		|| img->red_mask != 0xFF0000
+		|| img->blue_mask != 0xFF
+		|| img->green_mask != 0xFF00
+	)
+		return fprintf(stderr, "Invalid image format!\n"), -2;
 
 	XEvent ev;
 	while(1) {
 		XNextEvent(disp, &ev);
-		if(ev.type == DestroyNotify) break;
+		if(ev.type == DestroyNotify)
+			break;
+
+		if(ev.type == Expose)
+			XPutImage(disp, win, gc, img, 0, 0, 0, 0, WIDTH, HEIGHT);
 	}
 
 	free(buf);
 	XCloseDisplay(disp);
-	return;
+	return 0;
 }
 
 int main() {
 	Fbuf fb = { {WIDTH, HEIGHT}, fbufdata };
 	draw(&fb);
 	render_to_ppm(&fb);
-	render_to_x(&fb);
+	if(render_to_x(&fb)) return -1;
 
 	return 0;
 }
