@@ -6,6 +6,8 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
+// TODO win32
+
 typedef uint8_t u8;
 typedef uint32_t u32;
 typedef uint64_t u64;
@@ -41,24 +43,34 @@ typedef struct fbuf_t {
 	Pixel *buf;
 } Fbuf;
 
+
+// get pixel alpha value
 u8 pixA(Pixel p) {
-	return (p & 0xFF000000) >> 24;
+	return (p >> 24) & 0xFF;
 }
 
+// get pixel red value
 u8 pixR(Pixel p) {
-	return (p & 0x00FF0000) >> 16;
+	return (p >> 16) & 0xFF;
 }
 
+// get pixel green value
 u8 pixG(Pixel p) {
-	return (p & 0x0000FF00) >>  8;
+	return (p >> 8) & 0xFF;
 }
 
+// get pixel blue value
 u8 pixB(Pixel p) {
-	return (p & 0x000000FF);
+	return p & 0xFF;
 }
 
 Pixel argb_to_pixel(u8 a, u8 r, u8 g, u8 b) {
-	return (a << 24) | (r << 16) | (g << 8) | b;
+	return
+		  ((Pixel)a << 24)
+		| ((Pixel)r << 16)
+		| ((Pixel)g <<  8)
+		|  (Pixel)b
+	;
 }
 
 void fb_set_pix(Fbuf *fb, Vec2 r, Pixel p) {
@@ -127,8 +139,10 @@ int barycentric_coords(Vec3B *B, Vec2 dr, Vec2 dr1, Vec2 dr2, i32 D) {
 
 	B->b1 = ((i64)D1 * (i64)0xFFFFFFFF) / (i64)D;
 	B->b2 = ((i64)D2 * (i64)0xFFFFFFFF) / (i64)D;
+
 	if(B->b1 + B->b2 < B->b1) return -2;
 	B->b0 = 0xFFFFFFFF - B->b1 - B->b2;
+
 	return 0;
 }
 
@@ -149,12 +163,14 @@ Pixel lerp(Vec3B B, Vec3Pixel P) {
 	);
 }
 
+// TODO faster function for monochrome triangles?
 void fb_draw_triangle(Fbuf *fb, Rect bound, Triangle S, Vec3Pixel P) {
 	Vec2 dr1 = vec2sub(S.r1, S.r0);
 	Vec2 dr2 = vec2sub(S.r2, S.r0);
 	i32 D = det(dr1, dr2);
 	Vec2 r, dr;
 	Vec3B B;
+
 	for(
 		r.y = bound.r0.y, dr.y = r.y - S.r0.y;
 		r.y < bound.r0.y + bound.sz.y;
@@ -169,8 +185,7 @@ void fb_draw_triangle(Fbuf *fb, Rect bound, Triangle S, Vec3Pixel P) {
 				fb_set_pix(fb, r, lerp(B, P));
 }
 
-void ximgsetpix(Vec2 r, Pixel p, XImage *img) {
-	size_t i = 4*(r.y*img->width + r.x);
+void ximgsetpix(XImage *img, size_t i, Pixel p) {
 	img->data[i  ] = pixB(p);
 	img->data[i+1] = pixG(p);
 	img->data[i+2] = pixR(p);
@@ -181,9 +196,14 @@ void fbtoximg(Fbuf *fb, XImage *img) {
 	Vec2 r;
 	for(r.y = 0; r.y < fb->sz.y; ++r.y)
 		for(r.x = 0; r.x < fb->sz.x; ++r.x)
-			ximgsetpix(r, fb_get_pix(fb, r), img);
+			ximgsetpix(
+				img,
+				4*(r.y*img->width + r.x),
+				fb_get_pix(fb, r)
+			);
 }
 
+// TODO drawing independent of framebuffer size
 void draw(Fbuf *fb) {
 	Rect EyeLeft = {
 		{ 20, 100 },
@@ -237,30 +257,34 @@ void render_to_ppm(Fbuf *fb) {
 	fb_to_ppm(f, fb);
 }
 
-int render_to_x(Fbuf *fb) {
-	Display *disp = XOpenDisplay(NULL);
-	Window root = DefaultRootWindow(disp);
-	int scrnu = DefaultScreen(disp);
-	unsigned long blackpix = BlackPixel(disp, scrnu);
-	GC gc = DefaultGC(disp, scrnu);
-
-	XVisualInfo vinfo = {0};
-	if(!XMatchVisualInfo(disp, scrnu, 24, TrueColor, &vinfo))
-		return fprintf(stderr, "Unable to get proper visual!\n"), -1;
-
+Window crwin_X(
+	Display *disp, Visual *vis,
+	unsigned long width, unsigned long height
+) {
 	XSetWindowAttributes xswattrs = {
-		.background_pixel = blackpix,
+		.background_pixel = BlackPixel(disp, DefaultScreen(disp)),
 		.event_mask = StructureNotifyMask | ExposureMask,
 	};
 
 	Window win = XCreateWindow(
-		disp, root,
-		0, 0, fb->sz.x, fb->sz.y,
+		disp, DefaultRootWindow(disp),
+		0, 0, width, height,
 		0, 24, InputOutput,
-		vinfo.visual, CWEventMask | CWBackPixel, &xswattrs
+		vis, CWEventMask | CWBackPixel, &xswattrs
 	);
 	XMapWindow(disp, win);
-	XSync(disp, False);
+
+	return win;
+}
+
+int render_to_x(Fbuf *fb) {
+	Display *disp = XOpenDisplay(NULL);
+
+	XVisualInfo vinfo = {0};
+	if(!XMatchVisualInfo(disp, DefaultScreen(disp), 24, TrueColor, &vinfo))
+		return fprintf(stderr, "Unable to get proper visual!\n"), -1;
+
+	Window win = crwin_X(disp, vinfo.visual, fb->sz.x, fb->sz.y);
 
 	XWindowAttributes attrs = {0};
 	XGetWindowAttributes(disp, win, &attrs);
@@ -279,12 +303,15 @@ int render_to_x(Fbuf *fb) {
 
 	XEvent ev;
 	while(1) {
+		// TODO nonblocking event handling
 		XNextEvent(disp, &ev);
 		if(ev.type == DestroyNotify)
 			break;
 
 		if(ev.type == Expose)
-			XPutImage(disp, win, gc, img, 0, 0, 0, 0, fb->sz.x, fb->sz.y);
+			XPutImage(disp, win, DefaultGC(disp, DefaultScreen(disp)), img, 0, 0, 0, 0, fb->sz.x, fb->sz.y);
+
+		// TODO keyboard handling
 	}
 
 	free(buf);
