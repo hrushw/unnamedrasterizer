@@ -117,6 +117,7 @@ i32 vec2det(Vec2 v0, Vec2 v1) {
 	return v0.x*v1.y - v1.x*v0.y;
 }
 
+static
 Vec2 vec2sub(Vec2 r0, Vec2 r1) {
 	return (Vec2) {r0.x - r1.x, r0.y - r1.y};
 }
@@ -124,7 +125,6 @@ Vec2 vec2sub(Vec2 r0, Vec2 r1) {
 Vec2 uvec2sub(UVec2 r0, UVec2 r1) {
 	return (Vec2) {(i32)r0.x - (i32)r1.x, (i32)r0.y - (i32)r1.y};
 }
-
 
 int i32cmpsign(i32 x, i32 y) {
 	return (x > 0 && y < 0) || (x < 0 && y > 0);
@@ -134,7 +134,7 @@ int i32modcmp(i32 x, i32 y) {
 	return x > 0 ? x > y : x < y;
 }
 
-int barycentric_coords(Vec3B *B, i32 D1, i32 D2, i32 D) {
+int barycentric_coords(Vec3B *B, i32 D, i32 D1, i32 D2) {
 	if (
 		   i32cmpsign(D, D1)
 		|| i32cmpsign(D, D2)
@@ -144,11 +144,9 @@ int barycentric_coords(Vec3B *B, i32 D1, i32 D2, i32 D) {
 
 	B->b1 = ((i64)D1 * (i64)0xFFFFFFFF) / (i64)D;
 	B->b2 = ((i64)D2 * (i64)0xFFFFFFFF) / (i64)D;
-
-	if(B->b1 + B->b2 < B->b1) return -2;
 	B->b0 = 0xFFFFFFFF - B->b1 - B->b2;
 
-	return 0;
+	return B->b1 + B->b2 < B->b1 ? -2 : 0;
 }
 
 u8 u8lerp(Vec3B B, u8 x0, u8 x1, u8 x2) {
@@ -178,16 +176,16 @@ void fb_draw_triangle(Fbuf *fb, Rect bound, Triangle S, Vec3Pixel P) {
 	Vec3B B;
 
 	for(
-		r.y = bound.r0.y, dr.y = r.y - S.r0.y;
+		r.y = bound.r0.y, dr.y = bound.r0.y - S.r0.y;
 		r.y < bound.r0.y + bound.sz.y;
 		++r.y, ++dr.y
 	)
 		for(
-			r.x = bound.r0.x, dr.x = r.x - S.r0.x;
+			r.x = bound.r0.x, dr.x = bound.r0.x - S.r0.x;
 			r.x < bound.r0.x + bound.sz.x;
 			++r.x, ++dr.x
 		)
-			if(!barycentric_coords(&B, vec2det(dr1, dr), vec2det(dr, dr2), D))
+			if(!barycentric_coords(&B, D, vec2det(dr1, dr), vec2det(dr, dr2)))
 				fb_set_pix(fb, r, lerp(B, P));
 }
 
@@ -263,37 +261,41 @@ void render_to_ppm(Fbuf *fb) {
 	fb_to_ppm(f, fb);
 }
 
-Window crwin_X(
-	Display *disp, Visual *vis,
+// get a valid window and its attributes
+int crwin_X(
+	Window *win, XWindowAttributes *attrs, Display *disp,
 	unsigned long width, unsigned long height
 ) {
-	XSetWindowAttributes xswattrs = {
-		.background_pixel = BlackPixel(disp, DefaultScreen(disp)),
-		.event_mask = StructureNotifyMask | ExposureMask,
-	};
-
-	Window win = XCreateWindow(
-		disp, DefaultRootWindow(disp),
-		0, 0, width, height,
-		0, 24, InputOutput,
-		vis, CWEventMask | CWBackPixel, &xswattrs
-	);
-	XMapWindow(disp, win);
-
-	return win;
-}
-
-int render_to_x(Fbuf *fb) {
-	Display *disp = XOpenDisplay(NULL);
-
 	XVisualInfo vinfo = {0};
 	if(!XMatchVisualInfo(disp, DefaultScreen(disp), 24, TrueColor, &vinfo))
 		return fprintf(stderr, "Unable to get proper visual!\n"), -1;
 
-	Window win = crwin_X(disp, vinfo.visual, fb->sz.x, fb->sz.y);
+	XSetWindowAttributes xswattrs = {
+		.background_pixel = BlackPixel(disp, DefaultScreen(disp)),
+		.event_mask = StructureNotifyMask
+			| ExposureMask
+			| KeyPressMask
+			| KeyReleaseMask,
+	};
 
-	XWindowAttributes attrs = {0};
-	XGetWindowAttributes(disp, win, &attrs);
+	*win = XCreateWindow(
+		disp, DefaultRootWindow(disp),
+		0, 0, width, height,
+		0, 24, InputOutput,
+		vinfo.visual, CWEventMask | CWBackPixel, &xswattrs
+	);
+	XGetWindowAttributes(disp, *win, attrs);
+
+	XMapWindow(disp, *win);
+	return 0;
+}
+
+int render_to_x_disp(Display *disp, Fbuf *fb) {
+	Window win;
+	XWindowAttributes attrs;
+
+	if(crwin_X(&win, &attrs, disp, fb->sz.x, fb->sz.y))
+		return -1;
 
 	uint32_t* buf = calloc(fb->sz.y*fb->sz.x, 4);
 	XImage *img = XCreateImage(disp, attrs.visual, attrs.depth, ZPixmap, 0, (char*)buf, fb->sz.x, fb->sz.y, 32, 0);
@@ -317,10 +319,22 @@ int render_to_x(Fbuf *fb) {
 		if(ev.type == Expose)
 			XPutImage(disp, win, DefaultGC(disp, DefaultScreen(disp)), img, 0, 0, 0, 0, fb->sz.x, fb->sz.y);
 
-		// TODO keyboard handling
+		if(ev.type == KeyPress)
+			printf("Key press detected!\n");
+
+		if(ev.type == KeyRelease)
+			printf("Key release detected!\n");
 	}
 
 	free(buf);
+	return 0;
+}
+
+int render_to_x(Fbuf *fb) {
+	Display *disp = XOpenDisplay(NULL);
+
+	if(render_to_x_disp(disp, fb)) return -1;
+
 	XCloseDisplay(disp);
 	return 0;
 }
