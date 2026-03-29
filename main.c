@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <time.h>
+
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
@@ -176,12 +178,12 @@ void fb_draw_triangle(Fbuf *fb, Rect bound, Triangle S, Vec3Pixel P) {
 	Vec3B B;
 
 	for(
-		r.y = bound.r0.y, dr.y = bound.r0.y - S.r0.y;
+		r.y = bound.r0.y, dr.y = (i32)bound.r0.y - (i32)S.r0.y;
 		r.y < bound.r0.y + bound.sz.y;
 		++r.y, ++dr.y
 	)
 		for(
-			r.x = bound.r0.x, dr.x = bound.r0.x - S.r0.x;
+			r.x = bound.r0.x, dr.x = (i32)bound.r0.x - (i32)S.r0.x;
 			r.x < bound.r0.x + bound.sz.x;
 			++r.x, ++dr.x
 		)
@@ -189,7 +191,7 @@ void fb_draw_triangle(Fbuf *fb, Rect bound, Triangle S, Vec3Pixel P) {
 				fb_set_pix(fb, r, lerp(B, P));
 }
 
-void ximgsetpix(XImage *img, size_t i, Pixel p) {
+void ximgsetpix_bgra(XImage *img, size_t i, Pixel p) {
 	img->data[i  ] = pixB(p);
 	img->data[i+1] = pixG(p);
 	img->data[i+2] = pixR(p);
@@ -200,7 +202,7 @@ void fbtoximg(Fbuf *fb, XImage *img) {
 	UVec2 r;
 	for(r.y = 0; r.y < fb->sz.y; ++r.y)
 		for(r.x = 0; r.x < fb->sz.x; ++r.x)
-			ximgsetpix(
+			ximgsetpix_bgra(
 				img,
 				4*(r.y*img->width + r.x),
 				fb_get_pix(fb, r)
@@ -263,7 +265,8 @@ void render_to_ppm(Fbuf *fb) {
 
 // get a valid window and its attributes
 int crwin_X(
-	Window *win, XWindowAttributes *attrs, Display *disp,
+	Window *win, XWindowAttributes *attrs,
+	Display *disp, long evmask,
 	unsigned long width, unsigned long height
 ) {
 	XVisualInfo vinfo = {0};
@@ -272,10 +275,7 @@ int crwin_X(
 
 	XSetWindowAttributes xswattrs = {
 		.background_pixel = BlackPixel(disp, DefaultScreen(disp)),
-		.event_mask = StructureNotifyMask
-			| ExposureMask
-			| KeyPressMask
-			| KeyReleaseMask,
+		.event_mask = evmask
 	};
 
 	*win = XCreateWindow(
@@ -294,8 +294,12 @@ int render_to_x_disp(Display *disp, Fbuf *fb) {
 	Window win;
 	XWindowAttributes attrs;
 
-	if(crwin_X(&win, &attrs, disp, fb->sz.x, fb->sz.y))
-		return -1;
+	long evmask = StructureNotifyMask | ExposureMask | KeyPressMask | KeyReleaseMask;
+	if(crwin_X(
+		&win, &attrs,
+		disp, evmask,
+		fb->sz.x, fb->sz.y
+	)) return -1;
 
 	uint32_t* buf = calloc(fb->sz.y*fb->sz.x, 4);
 	XImage *img = XCreateImage(disp, attrs.visual, attrs.depth, ZPixmap, 0, (char*)buf, fb->sz.x, fb->sz.y, 32, 0);
@@ -310,22 +314,25 @@ int render_to_x_disp(Display *disp, Fbuf *fb) {
 		return fprintf(stderr, "Invalid image format!\n"), -2;
 
 	XEvent ev;
+	struct timespec dt = { 0, 166666667 };
 	while(1) {
-		// TODO nonblocking event handling
-		XNextEvent(disp, &ev);
-		if(ev.type == DestroyNotify)
-			break;
+		while(XCheckWindowEvent(disp, win, evmask, &ev)) {
+			if(ev.type == DestroyNotify)
+				goto end;
 
-		if(ev.type == Expose)
-			XPutImage(disp, win, DefaultGC(disp, DefaultScreen(disp)), img, 0, 0, 0, 0, fb->sz.x, fb->sz.y);
+			if(ev.type == Expose)
+				XPutImage(disp, win, DefaultGC(disp, DefaultScreen(disp)), img, 0, 0, 0, 0, fb->sz.x, fb->sz.y);
 
-		if(ev.type == KeyPress)
-			printf("Key press detected!\n");
+			if(ev.type == KeyPress)
+				printf("Key press detected!\n");
 
-		if(ev.type == KeyRelease)
-			printf("Key release detected!\n");
+			if(ev.type == KeyRelease)
+				printf("Key release detected!\n");
+		}
+		nanosleep(&dt, NULL);
 	}
 
+	end:
 	free(buf);
 	return 0;
 }
