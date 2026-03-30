@@ -33,12 +33,12 @@ typedef struct vec3b_t {
 } Vec3B;
 
 typedef struct rect_t {
-	UVec2 r0;
+	Vec2 r0;
 	UVec2 sz;
 } Rect;
 
 typedef struct triangle_t {
-	UVec2 r0, r1, r2;
+	Vec2 r0, r1, r2;
 } Triangle;
 
 typedef struct vec3_pixel_t {
@@ -87,16 +87,20 @@ Pixel fb_get_pix(Fbuf *fb, UVec2 r) {
 	return fb->buf[r.y*fb->sz.x + r.x];
 }
 
+i32 i32min0(i32 a) {
+	return a > 0 ? a : 0;
+}
+
 void fb_draw_rect(Fbuf *fb, Rect S, Pixel p) {
 	UVec2 r;
-	for(r.y = S.r0.y; r.y < S.r0.y + S.sz.y; ++r.y)
-		for(r.x = S.r0.x; r.x < S.r0.x + S.sz.x; ++r.x)
+	for(r.y = i32min0(S.r0.y); r.y < S.r0.y + S.sz.y; ++r.y)
+		for(r.x = i32min0(S.r0.x); r.x < S.r0.x + S.sz.x; ++r.x)
 			fb_set_pix(fb, r, p);
 }
 
 Rect fb_mirror_rect_x(Fbuf *fb, Rect R) {
 	return (Rect) {
-		(UVec2) { fb->sz.x - R.r0.x - R.sz.x, R.r0.y },
+		(Vec2) { (i32)fb->sz.x - R.r0.x - R.sz.x, R.r0.y },
 		R.sz
 	};
 }
@@ -122,6 +126,7 @@ Vec2 vec2sub(Vec2 r0, Vec2 r1) {
 	return (Vec2) {r0.x - r1.x, r0.y - r1.y};
 }
 
+static
 Vec2 uvec2sub(UVec2 r0, UVec2 r1) {
 	return (Vec2) {(i32)r0.x - (i32)r1.x, (i32)r0.y - (i32)r1.y};
 }
@@ -168,8 +173,8 @@ Pixel lerp(Vec3B B, Vec3Pixel P) {
 
 // TODO faster function for monochrome triangles?
 void fb_draw_triangle(Fbuf *fb, Triangle S, Vec3Pixel P) {
-	Vec2 dr1 = uvec2sub(S.r1, S.r0);
-	Vec2 dr2 = uvec2sub(S.r2, S.r0);
+	Vec2 dr1 = vec2sub(S.r1, S.r0);
+	Vec2 dr2 = vec2sub(S.r2, S.r0);
 	i32 D = vec2det(dr1, dr2);
 	UVec2 r;
 	Vec2 dr;
@@ -345,8 +350,8 @@ int render_to_x_disp(Fbuf *fb, Display *disp) {
 		fb_draw_rect(fb, I1, 0x00FF00);
 		fb_draw_rect(fb, I2, 0x00FF00);
 		if(dir) I1.r0.x += 10; else I1.r0.x -= 10;
-		if(I1.r0.x > 180 - I1.sz.x)
-			I1.r0.x = 180 - I1.sz.x,
+		if(I1.r0.x > 180 - (i32)I1.sz.x)
+			I1.r0.x = 180 - (i32)I1.sz.x,
 			dir = 0;
 		else if(I1.r0.x < 20)
 			I1.r0.x = 20,
