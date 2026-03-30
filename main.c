@@ -164,7 +164,7 @@ Pixel lerp(Vec3B B, Vec3Pixel P) {
 	);
 }
 
-
+/* Drawing functions */
 void fb_draw_rect(Fbuf *fb, Rect S, Pixel p) {
 	UVec2 r;
 	for(r.y = i32min0(S.r0.y); r.y < S.r0.y + S.sz.y; ++r.y)
@@ -172,34 +172,33 @@ void fb_draw_rect(Fbuf *fb, Rect S, Pixel p) {
 			fb_set_pix(fb, r, p);
 }
 
-Rect fb_mirror_rect_x(Fbuf *fb, Rect R) {
-	return (Rect) {
-		(Vec2) { (i32)fb->sz.x - R.r0.x - R.sz.x, R.r0.y },
-		R.sz
-	};
-}
-
-void fb_draw_parabola(Fbuf *fb, Rect bound, UVec2 origin, i32 a, Pixel p) {
+void fb_draw_circle(Fbuf *fb, Circle S, Pixel p) {
 	UVec2 r;
-	for(r.y = bound.r0.y; r.y < bound.r0.y + bound.sz.y; ++r.y)
-		for(r.x = bound.r0.x; r.x < bound.r0.x + bound.sz.x; ++r.x)
-			if (a*((i32)r.y - (i32)origin.y) > i32square(r.x - origin.x))
+	for(r.y = 0; r.y < fb->sz.y; ++r.y)
+		for(r.x = 0; r.x < fb->sz.x; ++r.x)
+			if(i32square(r.y - S.r0.y) + i32square(r.x - S.r0.x) < i32square(S.R))
 				fb_set_pix(fb, r, p);
 }
 
-int barycentric_coords(Vec3B *B, i32 D, i32 D1, i32 D2) {
+typedef enum ptstatus_e {
+	PT_IN = 0,
+	PT_OUT = -1
+} PtStatus;
+
+// find barycentric coordinates from given determinants
+PtStatus getlerpweights(Vec3B *B, i32 D, i32 D1, i32 D2) {
 	if (
 		   i32cmpsign(D, D1)
 		|| i32cmpsign(D, D2)
 		|| i32modcmp(D1, D)
 		|| i32modcmp(D2, D)
-	) return -1;
+	) return PT_OUT;
 
 	B->b1 = ((i64)D1 * (i64)U32MAX) / (i64)D;
 	B->b2 = ((i64)D2 * (i64)U32MAX) / (i64)D;
 	B->b0 = U32MAX - B->b1 - B->b2;
 
-	return B->b1 + B->b2 < B->b1 ? -2 : 0;
+	return B->b1 + B->b2 < B->b1 ? PT_OUT : PT_IN;
 }
 
 // TODO faster function for monochrome triangles?
@@ -221,18 +220,26 @@ void fb_draw_triangle(Fbuf *fb, Triangle S, Vec3Pixel P) {
 			r.x < fb->sz.x;
 			++r.x, ++dr.x
 		)
-			if(!barycentric_coords(&B, D, vec2det(dr1, dr), vec2det(dr, dr2)))
+			if(getlerpweights(&B, D, vec2det(dr1, dr), vec2det(dr, dr2)) == PT_IN)
 				fb_set_pix(fb, r, lerp(B, P));
 }
 
-void fb_draw_circle(Fbuf *fb, Circle S, Pixel p) {
+Rect fb_mirror_rect_x(Fbuf *fb, Rect R) {
+	return (Rect) {
+		(Vec2) { (i32)fb->sz.x - R.r0.x - R.sz.x, R.r0.y },
+		R.sz
+	};
+}
+
+void fb_draw_parabola(Fbuf *fb, Rect bound, UVec2 origin, i32 a, Pixel p) {
 	UVec2 r;
-	for(r.y = 0; r.y < fb->sz.y; ++r.y)
-		for(r.x = 0; r.x < fb->sz.x; ++r.x)
-			if(i32square(r.y - S.r0.y) + i32square(r.x - S.r0.x) < i32square(S.R))
+	for(r.y = bound.r0.y; r.y < bound.r0.y + bound.sz.y; ++r.y)
+		for(r.x = bound.r0.x; r.x < bound.r0.x + bound.sz.x; ++r.x)
+			if (a*((i32)r.y - (i32)origin.y) > i32square(r.x - origin.x))
 				fb_set_pix(fb, r, p);
 }
 
+/* framebuffer export functions (to X11 window or PPM file) */
 void ximgsetpix_bgra(XImage *img, size_t i, Pixel p) {
 	img->data[i  ] = pixB(p);
 	img->data[i+1] = pixG(p);
@@ -249,43 +256,6 @@ void fbtoximg(Fbuf *fb, XImage *img) {
 				4*(r.y*img->width + r.x),
 				fb_get_pix(fb, r)
 			);
-}
-
-// TODO drawing independent of framebuffer size
-void draw(Fbuf *fb) {
-	Rect EyeLeft = {
-		{ 20, 100 },
-		{ 160, 100 },
-	};
-	Pixel EyeClr = 0x00FF00;
-	fb_draw_rect(fb, EyeLeft, EyeClr);
-
-	Rect EyeRight = fb_mirror_rect_x(fb, EyeLeft);
-	fb_draw_rect(fb, EyeRight, EyeClr);
-
-	Rect SmileBound = {
-		{0, fb->sz.y/2},
-		{fb->sz.x, fb->sz.y/3}
-	};
-
-	UVec2 SmileOrigin = {fb->sz.x/2, 5*fb->sz.y/6};
-	Pixel SmileClr = 0xFF0000;
-
-	fb_draw_parabola(fb, SmileBound, SmileOrigin, -256, SmileClr);
-
-	Triangle Nose = {
-		{fb->sz.x/2, 160},
-		{(fb->sz.x/2) - 60, 210},
-		{(fb->sz.x/2) + 60, 210},
-	};
-	Vec3Pixel NoseColors = {
-		0xFFFF00,
-		0xFF7F3F,
-		0x7FFF3F,
-	};
-
-	fb_draw_triangle(fb, Nose, NoseColors);
-
 }
 
 void fb_to_ppm(FILE *f, Fbuf *fb) {
@@ -350,9 +320,9 @@ int render_to_x_disp(Fbuf *fb, Display *disp) {
 		fb->sz.x, fb->sz.y
 	)) return -1;
 
+	// Create XImage structure 
 	buf = calloc(fb->sz.y*fb->sz.x, 4);
 	img = XCreateImage(disp, attrs.visual, attrs.depth, ZPixmap, 0, (char*)buf, fb->sz.x, fb->sz.y, 32, 0);
-	fbtoximg(fb, img);
 	XInitImage(img);
 	if(
 		   img->bits_per_pixel != 32
@@ -365,6 +335,7 @@ int render_to_x_disp(Fbuf *fb, Display *disp) {
 	Circle I1 = { {40, 150}, 20 }, I2 = I1;
 	int dir = 1;
 	while(1) {
+		// Handle events
 		while(XCheckWindowEvent(disp, win, evmask, &ev)) {
 			if(ev.type == DestroyNotify)
 				goto end;
@@ -379,6 +350,7 @@ int render_to_x_disp(Fbuf *fb, Display *disp) {
 				printf("Key release detected!\n");
 		}
 
+		// Eye motion logic
 		fb_draw_circle(fb, I1, 0x00FF00);
 		fb_draw_circle(fb, I2, 0x00FF00);
 		if(dir) I1.r0.x += 10; else I1.r0.x -= 10;
@@ -392,9 +364,11 @@ int render_to_x_disp(Fbuf *fb, Display *disp) {
 		fb_draw_circle(fb, I1, 0x00007F);
 		fb_draw_circle(fb, I2, 0x00007F);
 
+		// draw image to window
 		fbtoximg(fb, img);
 		XPutImage(disp, win, DefaultGC(disp, DefaultScreen(disp)), img, 0, 0, 0, 0, fb->sz.x, fb->sz.y);
 
+		// sleep for 1 frame
 		nanosleep(&dt, NULL);
 	}
 
@@ -412,13 +386,51 @@ int render_to_x(Fbuf *fb) {
 	return 0;
 }
 
+/* Main drawing function */
+// TODO drawing independent of framebuffer size
+void draw(Fbuf *fb) {
+	Rect EyeLeft = {
+		{ 20, 100 },
+		{ 160, 100 },
+	};
+	Pixel EyeClr = 0x00FF00;
+	fb_draw_rect(fb, EyeLeft, EyeClr);
+
+	Rect EyeRight = fb_mirror_rect_x(fb, EyeLeft);
+	fb_draw_rect(fb, EyeRight, EyeClr);
+
+	Rect SmileBound = {
+		{0, fb->sz.y/2},
+		{fb->sz.x, fb->sz.y/3}
+	};
+
+	UVec2 SmileOrigin = {fb->sz.x/2, 5*fb->sz.y/6};
+	Pixel SmileClr = 0xFF0000;
+
+	fb_draw_parabola(fb, SmileBound, SmileOrigin, -256, SmileClr);
+
+	Triangle Nose = {
+		{fb->sz.x/2, 160},
+		{(fb->sz.x/2) - 60, 210},
+		{(fb->sz.x/2) + 60, 210},
+	};
+	Vec3Pixel NoseColors = {
+		0xFFFF00,
+		0xFF7F3F,
+		0x7FFF3F,
+	};
+
+	fb_draw_triangle(fb, Nose, NoseColors);
+
+}
+
 int main() {
-	enum { WIDTH = 640 };
-	enum { HEIGHT = 480 };
+	enum win_width_e { WIDTH = 640 };
+	enum win_height_e { HEIGHT = 480 };
 
 	static Pixel fbufdata[HEIGHT*WIDTH] = {0};
 
-	Fbuf fb = { {WIDTH, HEIGHT}, fbufdata };
+	Fbuf fb = { { WIDTH, HEIGHT }, fbufdata };
 	draw(&fb);
 	render_to_ppm(&fb);
 	if(render_to_x(&fb)) return -1;
