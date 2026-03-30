@@ -103,14 +103,33 @@ i32 i32min0(i32 a) {
 	return a > 0 ? a : 0;
 }
 
-static inline
-i32 i32cmpsign(i32 x, i32 y) {
+/*
+static
+int i32cmpsign(i32 x, i32 y) {
 	return (x > 0 && y < 0) || (x < 0 && y > 0);
 }
 
-static inline
-i32 i32modcmp(i32 x, i32 y) {
+static
+int i32cmpsign3(i32 x, i32 y, i32 z) {
+	return !(
+		   (x > 0 && y > 0 && z > 0)
+		|| (x < 0 && y < 0 && z < 0)
+	);
+}
+
+static
+int i32modcmp(i32 x, i32 y) {
 	return x > 0 ? x > y : x < y;
+}
+*/
+
+static inline
+void i32signrestrict(i32 *r, i32 *x1, i32 *x2) {
+	if(*r < 0) {
+		*r = - *r;
+		*x1 = - *x1;
+		*x2 = - *x2;
+	}
 }
 
 static inline
@@ -118,6 +137,12 @@ i32 i32square(i32 x) {
 	return x*x;
 }
 
+static inline
+u32 u32chkaddoverflow(u32 a, u32 b) {
+	return a + b < a;
+}
+
+/*
 static inline
 u32 absdiff(u32 a, u32 b) {
 	return a > b ? a - b : b - a;
@@ -127,6 +152,7 @@ static inline
 u64 u32square(u32 a) {
 	return (u64)a * (u64)a;
 }
+*/
 
 /* Vector Operations */
 static inline
@@ -139,10 +165,12 @@ Vec2 vec2sub(Vec2 r0, Vec2 r1) {
 	return (Vec2) {r0.x - r1.x, r0.y - r1.y};
 }
 
+/*
 static
 Vec2 uvec2sub(UVec2 r0, UVec2 r1) {
 	return (Vec2) {(i32)r0.x - (i32)r1.x, (i32)r0.y - (i32)r1.y};
 }
+*/
 
 /* Linear interpolation functions */
 static
@@ -187,18 +215,17 @@ typedef enum ptstatus_e {
 
 // find barycentric coordinates from given determinants
 PtStatus getlerpweights(Vec3B *B, i32 D, i32 D1, i32 D2) {
-	if (
-		   i32cmpsign(D, D1)
-		|| i32cmpsign(D, D2)
-		|| i32modcmp(D1, D)
-		|| i32modcmp(D2, D)
-	) return PT_OUT;
+	i32signrestrict(&D, &D1, &D2);
+
+	if(D1 < 0 || D2 < 0) return PT_OUT;
+	if(D1 > D || D2 > D) return PT_OUT;
 
 	B->b1 = ((i64)D1 * (i64)U32MAX) / (i64)D;
 	B->b2 = ((i64)D2 * (i64)U32MAX) / (i64)D;
 	B->b0 = U32MAX - B->b1 - B->b2;
 
-	return B->b1 + B->b2 < B->b1 ? PT_OUT : PT_IN;
+	if(u32chkaddoverflow(B->b1, B->b2)) return PT_OUT;
+	return PT_IN;
 }
 
 // TODO faster function for monochrome triangles?
@@ -231,7 +258,7 @@ Rect fb_mirror_rect_x(Fbuf *fb, Rect R) {
 	};
 }
 
-void fb_draw_parabola(Fbuf *fb, Rect bound, UVec2 origin, i32 a, Pixel p) {
+void fb_draw_parabola_bounded(Fbuf *fb, Rect bound, UVec2 origin, i32 a, Pixel p) {
 	UVec2 r;
 	for(r.y = bound.r0.y; r.y < bound.r0.y + bound.sz.y; ++r.y)
 		for(r.x = bound.r0.x; r.x < bound.r0.x + bound.sz.x; ++r.x)
@@ -332,7 +359,7 @@ int render_to_x_disp(Fbuf *fb, Display *disp) {
 	)
 		return fprintf(stderr, "Invalid image format!\n"), -2;
 
-	Circle I1 = { {40, 150}, 20 }, I2 = I1;
+	Circle EyeballLeft = { {40, 150}, 20 }, EyeballRight = EyeballLeft;
 	int dir = 1;
 	while(1) {
 		// Handle events
@@ -351,18 +378,18 @@ int render_to_x_disp(Fbuf *fb, Display *disp) {
 		}
 
 		// Eye motion logic
-		fb_draw_circle(fb, I1, 0x00FF00);
-		fb_draw_circle(fb, I2, 0x00FF00);
-		if(dir) I1.r0.x += 10; else I1.r0.x -= 10;
-		if(I1.r0.x > 180 - (i32)I1.R)
-			I1.r0.x = 180 - (i32)I1.R,
+		fb_draw_circle(fb, EyeballLeft, 0x00FF00);
+		fb_draw_circle(fb, EyeballRight, 0x00FF00);
+		if(dir) EyeballLeft.r0.x += 10; else EyeballLeft.r0.x -= 10;
+		if(EyeballLeft.r0.x > 180 - (i32)EyeballLeft.R)
+			EyeballLeft.r0.x = 180 - (i32)EyeballLeft.R,
 			dir = 0;
-		else if(I1.r0.x < 40)
-			I1.r0.x = 40,
+		else if(EyeballLeft.r0.x < 40)
+			EyeballLeft.r0.x = 40,
 			dir = 1;
-		I2.r0.x = fb->sz.x - I1.r0.x;
-		fb_draw_circle(fb, I1, 0x00007F);
-		fb_draw_circle(fb, I2, 0x00007F);
+		EyeballRight.r0.x = fb->sz.x - EyeballLeft.r0.x;
+		fb_draw_circle(fb, EyeballLeft, 0x00007F);
+		fb_draw_circle(fb, EyeballRight, 0x00007F);
 
 		// draw image to window
 		fbtoximg(fb, img);
@@ -407,7 +434,7 @@ void draw(Fbuf *fb) {
 	UVec2 SmileOrigin = {fb->sz.x/2, 5*fb->sz.y/6};
 	Pixel SmileClr = 0xFF0000;
 
-	fb_draw_parabola(fb, SmileBound, SmileOrigin, -256, SmileClr);
+	fb_draw_parabola_bounded(fb, SmileBound, SmileOrigin, -256, SmileClr);
 
 	Triangle Nose = {
 		{fb->sz.x/2, 160},
