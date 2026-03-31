@@ -32,6 +32,14 @@ typedef struct uvec2_t {
 	u32 x, y;
 } UVec2;
 
+typedef struct i32x2_t {
+	int32_t n0, n1;
+} i32x2;
+
+typedef struct uvec2x2_t {
+	UVec2 v0, v1;
+} UVec2x2;
+
 typedef struct fbuf_t {
 	UVec2 	sz;
 	Pixel *buf;
@@ -98,19 +106,19 @@ Pixel argb_to_pixel(u8 a, u8 r, u8 g, u8 b) {
 
 /* Framebuffer pixel access functions */
 static inline
-void fb_set_pix(Fbuf *fb, UVec2 r, Pixel p) {
-	fb->buf[r.y*fb->sz.x + r.x] = p;
+void fb_set_pix(Fbuf fb, UVec2 r, Pixel p) {
+	fb.buf[r.y*fb.sz.x + r.x] = p;
 }
 
 static inline
-Pixel fb_get_pix(Fbuf *fb, UVec2 r) {
-	return fb->buf[r.y*fb->sz.x + r.x];
+Pixel fb_get_pix(Fbuf fb, UVec2 r) {
+	return fb.buf[r.y*fb.sz.x + r.x];
 }
 
 /* Integer operations */
 static inline
-i32 i32min0(i32 a) {
-	return a > 0 ? a : 0;
+u32 i32restrict0(i32 a, u32 max) {
+	return a > 0 ? (a < (i32)max ? a : (i32)max-1) : 0;
 }
 
 static inline
@@ -138,14 +146,56 @@ i32 vec2det(Vec2 v0, Vec2 v1) {
 	return v0.x*v1.y - v1.x*v0.y;
 }
 
-static
+static inline
 Vec2 vec2sub(Vec2 r0, Vec2 r1) {
 	return (Vec2) {r0.x - r1.x, r0.y - r1.y};
 }
 
-static
+static inline
 Vec2 uv2v2sub(UVec2 r0, Vec2 r1) {
 	return (Vec2) {(i32)r0.x - r1.x, (i32)r0.y - r1.y};
+}
+
+i32x2 i32minmax3partial(i32 x, i32 y, i32 z) {
+	if(y < z)
+		return (i32x2) {x, z};
+	else if(x < z)
+		return (i32x2) {x, y};
+	else
+		return (i32x2) {z, y};
+}
+
+i32x2 i32minmax3(i32 x, i32 y, i32 z) {
+	if(x < y)
+		return i32minmax3partial(x, y, z);
+	else
+		return i32minmax3partial(y, x, z);
+}
+
+UVec2x2 triangle_bound(UVec2 fbsz, Triangle S) {
+	i32x2 xmm = i32minmax3(S.r0.x, S.r1.x, S.r2.x);
+	i32x2 ymm = i32minmax3(S.r0.y, S.r1.y, S.r2.y);
+	return (UVec2x2) {
+		{
+			i32restrict0(xmm.n0, fbsz.x),
+			i32restrict0(ymm.n0, fbsz.y),
+		}, {
+			i32restrict0(xmm.n1, fbsz.x),
+			i32restrict0(ymm.n1, fbsz.y),
+		},
+	};
+}
+
+UVec2x2 rect_bound(UVec2 fbsz, Rect S) {
+	return (UVec2x2) {
+		{
+			i32restrict0(S.r0.x, fbsz.x),
+			i32restrict0(S.r0.y, fbsz.y),
+		}, {
+			i32restrict0(S.r0.x + (i32)S.sz.x, fbsz.x),
+			i32restrict0(S.r0.y + (i32)S.sz.y, fbsz.y),
+		}
+	};
 }
 
 /* Linear interpolation functions */
@@ -169,17 +219,18 @@ Pixel lerp(Vec3B B, Vec3Pixel P) {
 }
 
 /* Drawing functions */
-void fb_draw_rect(Fbuf *fb, Rect S, Pixel p) {
+void fb_draw_rect(Fbuf fb, Rect S, Pixel p) {
 	UVec2 r;
-	for(r.y = i32min0(S.r0.y); r.y < S.r0.y + S.sz.y; ++r.y)
-		for(r.x = i32min0(S.r0.x); r.x < S.r0.x + S.sz.x; ++r.x)
+	UVec2x2 bound = rect_bound(fb.sz, S);
+	for(r.y = bound.v0.y; r.y < bound.v1.y; ++r.y)
+		for(r.x = bound.v0.x; r.x < bound.v1.x; ++r.x)
 			fb_set_pix(fb, r, p);
 }
 
-void fb_draw_circle(Fbuf *fb, Circle S, Pixel p) {
+void fb_draw_circle(Fbuf fb, Circle S, Pixel p) {
 	UVec2 r;
-	for(r.y = 0; r.y < fb->sz.y; ++r.y)
-		for(r.x = 0; r.x < fb->sz.x; ++r.x)
+	for(r.y = 0; r.y < fb.sz.y; ++r.y)
+		for(r.x = 0; r.x < fb.sz.x; ++r.x)
 			if(i32square(r.y - S.r0.y) + i32square(r.x - S.r0.x) < i32square(S.R))
 				fb_set_pix(fb, r, p);
 }
@@ -204,34 +255,36 @@ PtStatus getlerpweights(Vec3B *B, i32 D, i32 D1, i32 D2) {
 	return PT_IN;
 }
 
+static inline
 PtStatus getlerpweights_dr(Vec3B *B, i32 D, Vec2 dr, Vec2 dr1, Vec2 dr2) {
 	return getlerpweights(B, D, vec2det(dr1, dr), vec2det(dr, dr2));
 }
 
 // TODO faster function for monochrome triangles?
-void fb_draw_triangle(Fbuf *fb, Triangle S, Vec3Pixel P) {
+void fb_draw_triangle(Fbuf fb, Triangle S, Vec3Pixel P) {
 	Vec3B weights;
 
+	UVec2x2 bound = triangle_bound(fb.sz, S);
 	S.r1 = vec2sub(S.r1, S.r0);
 	S.r2 = vec2sub(S.r2, S.r0);
 	i32 D = vec2det(S.r1, S.r2);
 
 	UVec2 r;
-	for(r.y = 0; r.y < fb->sz.y; ++r.y)
-		for(r.x = 0; r.x < fb->sz.x; ++r.x)
+	for(r.y = bound.v0.y; r.y < bound.v1.y; ++r.y)
+		for(r.x = bound.v0.x; r.x < bound.v1.x; ++r.x)
 			if(getlerpweights_dr(&weights, D, uv2v2sub(r, S.r0), S.r1, S.r2) == PT_IN)
 				fb_set_pix(fb, r, lerp(weights, P));
 }
 
 static
-Rect fb_mirror_rect_x(Fbuf *fb, Rect R) {
+Rect fb_mirror_rect_x(Fbuf fb, Rect R) {
 	return (Rect) {
-		{ (i32)fb->sz.x - R.r0.x - R.sz.x, R.r0.y },
+		{ (i32)fb.sz.x - R.r0.x - R.sz.x, R.r0.y },
 		R.sz
 	};
 }
 
-void fb_draw_parabola_bounded(Fbuf *fb, Rect bound, UVec2 origin, i32 a, Pixel p) {
+void fb_draw_parabola_bounded(Fbuf fb, Rect bound, UVec2 origin, i32 a, Pixel p) {
 	UVec2 r;
 	for(r.y = bound.r0.y; r.y < bound.r0.y + bound.sz.y; ++r.y)
 		for(r.x = bound.r0.x; r.x < bound.r0.x + bound.sz.x; ++r.x)
@@ -239,13 +292,12 @@ void fb_draw_parabola_bounded(Fbuf *fb, Rect bound, UVec2 origin, i32 a, Pixel p
 				fb_set_pix(fb, r, p);
 }
 
-
 /* framebuffer export functions (to X11 window or PPM file) */
-void fb_to_ppm(FILE *f, Fbuf *fb) {
+void fb_to_ppm(FILE *f, Fbuf fb) {
 	Pixel p;
 	u8 pixbuf[3];
-	for(u32 i = 0; i < fb->sz.x*fb->sz.y; ++i) {
-		p = fb->buf[i];
+	for(u32 i = 0; i < fb.sz.x*fb.sz.y; ++i) {
+		p = fb.buf[i];
 		pixbuf[0] = pixR(p);
 		pixbuf[1] = pixG(p);
 		pixbuf[2] = pixB(p);
@@ -253,11 +305,11 @@ void fb_to_ppm(FILE *f, Fbuf *fb) {
 	}
 }
 
-void render_to_ppm(Fbuf *fb) {
+void render_to_ppm(Fbuf fb) {
 	const char* fname = "gaem.ppm";
 	FILE* f = fopen(fname, "wb");
 
-	fprintf(f, "P6\n%d %d 255\n", fb->sz.x, fb->sz.y);
+	fprintf(f, "P6\n%d %d 255\n", fb.sz.x, fb.sz.y);
 	fb_to_ppm(f, fb);
 }
 
@@ -269,10 +321,10 @@ void ximgsetpix_bgra(XImage *img, size_t i, Pixel p) {
 	img->data[i+3] = pixA(p);
 }
 
-void fbtoximg(Fbuf *fb, XImage *img) {
+void fbtoximg(Fbuf fb, XImage *img) {
 	UVec2 r;
-	for(r.y = 0; r.y < fb->sz.y; ++r.y)
-		for(r.x = 0; r.x < fb->sz.x; ++r.x)
+	for(r.y = 0; r.y < fb.sz.y; ++r.y)
+		for(r.x = 0; r.x < fb.sz.x; ++r.x)
 			ximgsetpix_bgra(
 				img,
 				4*(r.y*img->width + r.x),
@@ -299,33 +351,30 @@ int handle_events_x(Display *disp, Window win, long evmask) {
 }
 
 void render_to_x_win_img(
-	Fbuf *fb, Display *disp, Window win,
+	Fbuf fb, Display *disp, Window win,
 	XImage *img, long evmask
 ) {
 	struct timespec dt = { 0, 166666667 };
-	Circle EyeballLeft = { {fb->sz.x/16, 5*fb->sz.y/16}, fb->sz.x/32 }, EyeballRight = EyeballLeft;
+	Circle EyeballLeft = { {fb.sz.x/16, 5*fb.sz.y/16}, fb.sz.x/32 }, EyeballRight = EyeballLeft;
 	int dir = 1;
 	while(!handle_events_x(disp, win, evmask)) {
-		// Handle events
 		// Eye motion logic
 		fb_draw_circle(fb, EyeballLeft, 0x00FF00);
 		fb_draw_circle(fb, EyeballRight, 0x00FF00);
 		if(dir) EyeballLeft.r0.x += 10; else EyeballLeft.r0.x -= 10;
-		if(EyeballLeft.r0.x > 9*(i32)fb->sz.x/32 - (i32)EyeballLeft.R)
-			EyeballLeft.r0.x = 9*fb->sz.x/32 - (i32)EyeballLeft.R,
+		if(EyeballLeft.r0.x > 9*(i32)fb.sz.x/32 - (i32)EyeballLeft.R)
+			EyeballLeft.r0.x = 9*fb.sz.x/32 - (i32)EyeballLeft.R,
 			dir = 0;
-		else if(EyeballLeft.r0.x < (i32)fb->sz.x/16)
-			EyeballLeft.r0.x = fb->sz.x/16,
+		else if(EyeballLeft.r0.x < (i32)fb.sz.x/16)
+			EyeballLeft.r0.x = fb.sz.x/16,
 			dir = 1;
-		EyeballRight.r0.x = fb->sz.x - EyeballLeft.r0.x;
+		EyeballRight.r0.x = fb.sz.x - EyeballLeft.r0.x;
 		fb_draw_circle(fb, EyeballLeft, 0x00007F);
 		fb_draw_circle(fb, EyeballRight, 0x00007F);
 
-		// draw image to window
 		fbtoximg(fb, img);
-		XPutImage(disp, win, DefaultGC(disp, DefaultScreen(disp)), img, 0, 0, 0, 0, fb->sz.x, fb->sz.y);
+		XPutImage(disp, win, DefaultGC(disp, DefaultScreen(disp)), img, 0, 0, 0, 0, fb.sz.x, fb.sz.y);
 
-		// sleep for 1 frame
 		nanosleep(&dt, NULL);
 	}
 }
@@ -358,13 +407,13 @@ int crwin_x(
 }
 
 int render_to_x_win(
-	Fbuf *fb, Display *disp, Window win,
+	Fbuf fb, Display *disp, Window win,
 	XWindowAttributes attrs
 ) {
 	XImage *img = XCreateImage(
 		disp, attrs.visual, attrs.depth, ZPixmap, 0,
-		calloc(fb->sz.y*fb->sz.x, 4),
-		fb->sz.x, fb->sz.y, 32, 0
+		calloc(fb.sz.y*fb.sz.x, 4),
+		fb.sz.x, fb.sz.y, 32, 0
 	);
 	XInitImage(img);
 	if(
@@ -381,16 +430,16 @@ int render_to_x_win(
 	return 0;
 }
 
-int render_to_x_disp(Fbuf *fb, Display *disp) {
+int render_to_x_disp(Fbuf fb, Display *disp) {
 	Window win;
 	XWindowAttributes attrs;
 
-	if(crwin_x(&win, &attrs, disp, fb->sz.x, fb->sz.y))
+	if(crwin_x(&win, &attrs, disp, fb.sz.x, fb.sz.y))
 		return -1;
 	return render_to_x_win(fb, disp, win, attrs);
 }
 
-int render_to_x(Fbuf *fb) {
+int render_to_x(Fbuf fb) {
 	Display *disp = XOpenDisplay(NULL);
 
 	if(!disp)
@@ -402,10 +451,10 @@ int render_to_x(Fbuf *fb) {
 }
 
 /* Main drawing function */
-void draw(Fbuf *fb) {
+void draw(Fbuf fb) {
 	Rect EyeLeft = {
-		{ fb->sz.x/32, 10*fb->sz.y/48 },
-		{ fb->sz.x/4, 10*fb->sz.y/48 },
+		{ fb.sz.x/32, 10*fb.sz.y/48 },
+		{ fb.sz.x/4, 10*fb.sz.y/48 },
 	};
 	Pixel EyeClr = 0x00FF00;
 	fb_draw_rect(fb, EyeLeft, EyeClr);
@@ -414,19 +463,19 @@ void draw(Fbuf *fb) {
 	fb_draw_rect(fb, EyeRight, EyeClr);
 
 	Rect SmileBound = {
-		{0, fb->sz.y/2},
-		{fb->sz.x, fb->sz.y/3}
+		{0, fb.sz.y/2},
+		{fb.sz.x, fb.sz.y/3}
 	};
 
-	UVec2 SmileOrigin = {fb->sz.x/2, 5*fb->sz.y/6};
+	UVec2 SmileOrigin = {fb.sz.x/2, 5*fb.sz.y/6};
 	Pixel SmileClr = 0xFF0000;
 
 	fb_draw_parabola_bounded(fb, SmileBound, SmileOrigin, -256, SmileClr);
 
 	Triangle Nose = {
-		{fb->sz.x/2, fb->sz.y/3},
-		{13*fb->sz.x/32, 7*fb->sz.y/16},
-		{19*fb->sz.x/32, 7*fb->sz.y/16},
+		{fb.sz.x/2, fb.sz.y/3},
+		{13*fb.sz.x/32, 7*fb.sz.y/16},
+		{19*fb.sz.x/32, 7*fb.sz.y/16},
 	};
 	Vec3Pixel NoseColors = {
 		0xFFFF00,
@@ -435,6 +484,14 @@ void draw(Fbuf *fb) {
 	};
 
 	fb_draw_triangle(fb, Nose, NoseColors);
+
+	Rect outofboundrect = {
+		{ -200, -300 },
+		{ 100, 200 }
+	};
+
+	// TODO more tests for bounds checking
+	fb_draw_rect(fb, outofboundrect, 0xFF00FF);
 }
 
 int main() {
@@ -449,9 +506,9 @@ int main() {
 	printf("%d %d\n", z1.x, z1.y);
 
 	Fbuf fb = { { WIDTH, HEIGHT }, fbufdata };
-	draw(&fb);
-	render_to_ppm(&fb);
-	if(render_to_x(&fb)) return -1;
+	draw(fb);
+	render_to_ppm(fb);
+	if(render_to_x(fb)) return -1;
 
 	return 0;
 }
