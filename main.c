@@ -21,9 +21,6 @@ typedef int64_t i64;
 typedef uint32_t Pixel;
 typedef uint32_t Angle;
 
-#define U32MAX UINT32_MAX
-#define I32MAX INT32_MAX
-
 /* Structure declarations */
 typedef struct vec2_t {
 	int32_t x, y;
@@ -39,7 +36,7 @@ typedef struct i32x2_t {
 } i32x2;
 
 typedef struct uvec2x2_t {
-	UVec2 v0, v1;
+	UVec2 r0, r1;
 } UVec2x2;
 
 typedef struct fbuf_t {
@@ -144,61 +141,6 @@ Vec2 uv2v2sub(UVec2 r0, Vec2 r1) {
 	return (Vec2) {(i32)r0.x - r1.x, (i32)r0.y - r1.y};
 }
 
-/*
-static
-i32x2 i32minmax3partial(i32 x, i32 y, i32 z) {
-	if(y < z)
-		return (i32x2) {x, z};
-	else if(x < z)
-		return (i32x2) {x, y};
-	else
-		return (i32x2) {z, y};
-}
-
-static
-i32x2 i32minmax3(i32 x, i32 y, i32 z) {
-	return (x < y)
-		? i32minmax3partial(x, y, z)
-		: i32minmax3partial(y, x, z)
-	;
-}
-
-static
-UVec2x2 xy2x2restrict(UVec2 fbsz, i32x2 X, i32x2 Y) {
-	return (UVec2x2) {
-		{
-			i32restrict0(X.n0, fbsz.x),
-			i32restrict0(Y.n0, fbsz.y),
-		}, {
-			i32restrict0(X.n1, fbsz.x),
-			i32restrict0(Y.n1, fbsz.y),
-		},
-	};
-}
-
-static
-UVec2x2 triangle_bound(UVec2 fbsz, Triangle S) {
-	return xy2x2restrict(
-		fbsz,
-		i32minmax3(S.r0.x, S.r1.x, S.r2.x),
-		i32minmax3(S.r0.y, S.r1.y, S.r2.y)
-	);
-}
-*/
-
-static
-UVec2x2 rect_bound(UVec2 fbsz, Rect S) {
-	return (UVec2x2) {
-		{
-			i32restrict0(S.r0.x, fbsz.x),
-			i32restrict0(S.r0.y, fbsz.y),
-		}, {
-			i32restrict0(S.r0.x + (i32)S.sz.x, fbsz.x),
-			i32restrict0(S.r0.y + (i32)S.sz.y, fbsz.y),
-		}
-	};
-}
-
 /* Linear interpolation functions */
 static
 u8 u8lerp(UVec3B B, u8 x0, u8 x1, u8 x2) {
@@ -220,12 +162,32 @@ Pixel lerp(UVec3B B, Vec3Pixel P) {
 }
 
 /* Drawing functions */
-void fb_draw_rect(Fbuf fb, Rect S, Pixel p) {
+UVec2x2 rect_bound_uvec2x2(Fbuf fb, Rect S) {
+	UVec2x2 S_;
+	S_.r0.x = S.r0.x < 0 ? 0 : S.r0.x;
+	S_.r0.y = S.r0.y < 0 ? 0 : S.r0.y;
+
+	S.r0.x += S.sz.x;
+	S.r0.y += S.sz.y;
+
+	S_.r1.x = S.r0.x < 0 ? 0 : S.r0.x;
+	S_.r1.y = S.r0.y < 0 ? 0 : S.r0.y;
+
+	S_.r1.x = S_.r1.x > fb.sz.x ? fb.sz.x : S_.r1.x;
+	S_.r1.y = S_.r1.y > fb.sz.y ? fb.sz.y : S_.r1.y;
+
+	return S_;
+}
+
+void fb_draw_rect_uvec2x2(Fbuf fb, UVec2x2 S, Pixel p) {
 	UVec2 r;
-	UVec2x2 bound = rect_bound(fb.sz, S);
-	for(r.y = bound.v0.y; r.y < bound.v1.y; ++r.y)
-		for(r.x = bound.v0.x; r.x < bound.v1.x; ++r.x)
+	for(r.y = S.r0.y; r.y < S.r1.y; ++r.y)
+		for(r.x = S.r0.x; r.x < S.r1.x; ++r.x)
 			fb_set_pix(fb, r, p);
+}
+
+void fb_draw_rect(Fbuf fb, Rect S, Pixel p) {
+	fb_draw_rect_uvec2x2(fb, rect_bound_uvec2x2(fb, S), p);
 }
 
 void fb_draw_circle(Fbuf fb, Circle S, Pixel p) {
