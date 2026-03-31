@@ -57,6 +57,10 @@ typedef struct triangle_t {
 	Vec2 r0, r1, r2;
 } Triangle;
 
+typedef struct quad_t {
+	Vec2 r0, r1, r2, r3;
+} Quad;
+
 typedef struct vec3_pixel_t {
 	Pixel p0, p1, p2;
 } Vec3Pixel;
@@ -242,6 +246,13 @@ void fb_draw_triangle(Fbuf fb, Triangle S, Pixel p) {
 				fb_set_pix(fb, r, p);
 }
 
+void fb_draw_quad(Fbuf fb, Quad S, Pixel p) {
+	Triangle S_ = { S.r0, S.r1, S.r2 };
+	fb_draw_triangle(fb, S_, p);
+	S_ = (Triangle) { S.r0, S.r3, S.r2 };
+	fb_draw_triangle(fb, S_, p);
+}
+
 void fb_draw_triangle_lerped(Fbuf fb, Triangle S, Vec3Pixel P) {
 	S.r1 = vec2sub(S.r1, S.r0);
 	S.r2 = vec2sub(S.r2, S.r0);
@@ -334,11 +345,12 @@ void render_to_x_win_img(
 ) {
 	struct timespec dt = { 0, 166666667 };
 	Circle EyeballLeft = { {fb.sz.x/16, 5*fb.sz.y/16}, fb.sz.x/32 }, EyeballRight = EyeballLeft;
+	EyeballRight.r0.x = fb.sz.x - EyeballLeft.r0.x;
 	int dir = 1;
 	while(!handle_events_x(disp, win, evmask)) {
 		// Eye motion logic
 		fb_draw_circle(fb, EyeballLeft, 0x00FF00);
-		fb_draw_circle(fb, EyeballRight, 0x00FF00);
+		fb_draw_circle(fb, EyeballRight, 0x00CF3F);
 		if(dir) EyeballLeft.r0.x += 10; else EyeballLeft.r0.x -= 10;
 		if(EyeballLeft.r0.x > 9*(i32)fb.sz.x/32 - (i32)EyeballLeft.R)
 			EyeballLeft.r0.x = 9*fb.sz.x/32 - (i32)EyeballLeft.R,
@@ -436,11 +448,18 @@ void draw(Fbuf fb) {
 		{ fb.sz.x/32, 10*fb.sz.y/48 },
 		{ fb.sz.x/4, 10*fb.sz.y/48 },
 	};
-	Pixel EyeClr = 0x00FF00;
-	fb_draw_rect(fb, EyeLeft, EyeClr);
+	Pixel EyeLeftClr = 0x00FF00;
+	fb_draw_rect(fb, EyeLeft, EyeLeftClr);
 
 	Rect EyeRight = fb_mirror_rect_x(fb, EyeLeft);
-	fb_draw_rect(fb, EyeRight, EyeClr);
+	Quad EyeRightQuad = {
+		EyeRight.r0,
+		{ EyeRight.r0.x - fb.sz.x/64, EyeRight.r0.y + EyeRight.sz.y },
+		{ EyeRight.r0.x + EyeRight.sz.x, EyeRight.r0.y + EyeRight.sz.y - fb.sz.x/32 },
+		{ EyeRight.r0.x + EyeRight.sz.x, EyeRight.r0.y },
+	};
+	Pixel EyeRightClr = 0x00CF3F;
+	fb_draw_quad(fb, EyeRightQuad, EyeRightClr);
 
 	Rect SmileBound = {
 		{0, fb.sz.y/2},
