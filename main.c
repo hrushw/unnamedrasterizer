@@ -143,6 +143,11 @@ Vec2 vec2sub(Vec2 r0, Vec2 r1) {
 	return (Vec2) {r0.x - r1.x, r0.y - r1.y};
 }
 
+static
+Vec2 uv2v2sub(UVec2 r0, Vec2 r1) {
+	return (Vec2) {(i32)r0.x - r1.x, (i32)r0.y - r1.y};
+}
+
 /* Linear interpolation functions */
 static
 u8 u8lerp(Vec3B B, u8 x0, u8 x1, u8 x2) {
@@ -199,29 +204,23 @@ PtStatus getlerpweights(Vec3B *B, i32 D, i32 D1, i32 D2) {
 	return PT_IN;
 }
 
+PtStatus getlerpweights_dr(Vec3B *B, i32 D, Vec2 dr, Vec2 dr1, Vec2 dr2) {
+	return getlerpweights(B, D, vec2det(dr1, dr), vec2det(dr, dr2));
+}
+
 // TODO faster function for monochrome triangles?
 void fb_draw_triangle(Fbuf *fb, Triangle S, Vec3Pixel P) {
-	i32 D;
-	UVec2 r;
-	Vec2 dr;
-	Vec3B B;
+	Vec3B weights;
 
 	S.r1 = vec2sub(S.r1, S.r0);
 	S.r2 = vec2sub(S.r2, S.r0);
-	D = vec2det(S.r1, S.r2);
+	i32 D = vec2det(S.r1, S.r2);
 
-	for(
-		r.y = 0, dr.y = (i32)r.y - (i32)S.r0.y;
-		r.y < fb->sz.y;
-		++r.y, ++dr.y
-	)
-		for(
-			r.x = 0, dr.x = (i32)r.x - (i32)S.r0.x;
-			r.x < fb->sz.x;
-			++r.x, ++dr.x
-		)
-			if(getlerpweights(&B, D, vec2det(S.r1, dr), vec2det(dr, S.r2)) == PT_IN)
-				fb_set_pix(fb, r, lerp(B, P));
+	UVec2 r;
+	for(r.y = 0; r.y < fb->sz.y; ++r.y)
+		for(r.x = 0; r.x < fb->sz.x; ++r.x)
+			if(getlerpweights_dr(&weights, D, uv2v2sub(r, S.r0), S.r1, S.r2) == PT_IN)
+				fb_set_pix(fb, r, lerp(weights, P));
 }
 
 static
@@ -284,23 +283,25 @@ void fbtoximg(Fbuf *fb, XImage *img) {
 /* X11 handling functions */
 int handle_events_x(Display *disp, Window win, long evmask) {
 	XEvent ev;
-	while(XCheckWindowEvent(disp, win, evmask, &ev)) {
-		if(ev.type == DestroyNotify)
-			return -1;
 
-		if(ev.type == Expose)
-			(void)0;
-
-		if(ev.type == KeyPress)
-			printf("Key press detected!\n");
-
-		if(ev.type == KeyRelease)
-			printf("Key release detected!\n");
+	while(XCheckWindowEvent(disp, win, evmask, &ev))
+	switch(ev.type) {
+		case DestroyNotify: return -1;
+		case Expose: break;
+		case KeyPress:
+			printf("Key press detected!\n"); break;
+		case KeyRelease:
+			printf("Key release detected!\n"); break;
+		default: break;
 	}
+
 	return 0;
 }
 
-void render_to_x_win_img(Fbuf *fb, Display *disp, Window win, long evmask, XImage *img) {
+void render_to_x_win_img(
+	Fbuf *fb, Display *disp, Window win,
+	XImage *img, long evmask
+) {
 	struct timespec dt = { 0, 166666667 };
 	Circle EyeballLeft = { {fb->sz.x/16, 5*fb->sz.y/16}, fb->sz.x/32 }, EyeballRight = EyeballLeft;
 	int dir = 1;
@@ -331,9 +332,10 @@ void render_to_x_win_img(Fbuf *fb, Display *disp, Window win, long evmask, XImag
 
 int crwin_x(
 	Window *win, XWindowAttributes *attrs,
-	Display *disp, long evmask,
+	Display *disp,
 	unsigned long width, unsigned long height
 ) {
+	long evmask = StructureNotifyMask | ExposureMask | KeyPressMask | KeyReleaseMask;
 	XVisualInfo vinfo = {0};
 	XSetWindowAttributes xswattrs = {
 		.background_pixel = BlackPixel(disp, DefaultScreen(disp)),
@@ -355,7 +357,10 @@ int crwin_x(
 	return 0;
 }
 
-int render_to_x_win(Fbuf *fb, Display *disp, Window win, XWindowAttributes attrs, long evmask) {
+int render_to_x_win(
+	Fbuf *fb, Display *disp, Window win,
+	XWindowAttributes attrs
+) {
 	XImage *img = XCreateImage(
 		disp, attrs.visual, attrs.depth, ZPixmap, 0,
 		calloc(fb->sz.y*fb->sz.x, 4),
@@ -370,28 +375,30 @@ int render_to_x_win(Fbuf *fb, Display *disp, Window win, XWindowAttributes attrs
 	)
 		return fprintf(stderr, "Invalid image format!\n"), -1;
 
-	render_to_x_win_img(fb, disp, win, evmask, img);
+	render_to_x_win_img(fb, disp, win, img, attrs.your_event_mask);
 
 	free(img->data);
 	return 0;
 }
 
-int render_to_x(Fbuf *fb) {
-	Display *disp = XOpenDisplay(NULL);
+int render_to_x_disp(Fbuf *fb, Display *disp) {
 	Window win;
 	XWindowAttributes attrs;
-	long evmask = StructureNotifyMask | ExposureMask | KeyPressMask | KeyReleaseMask;
 
-	if(crwin_x(
-		&win, &attrs,
-		disp, evmask,
-		fb->sz.x, fb->sz.y
-	)) return -1;
+	if(crwin_x(&win, &attrs, disp, fb->sz.x, fb->sz.y))
+		return -1;
+	return render_to_x_win(fb, disp, win, attrs);
+}
 
-	if(render_to_x_win(fb, disp, win, attrs, evmask)) return -2;
+int render_to_x(Fbuf *fb) {
+	Display *disp = XOpenDisplay(NULL);
 
+	if(!disp)
+		return fprintf(stderr, "Unable to open display!\n"), -1;
+
+	int ret = render_to_x_disp(fb, disp);
 	XCloseDisplay(disp);
-	return 0;
+	return ret;
 }
 
 /* Main drawing function */
@@ -428,7 +435,6 @@ void draw(Fbuf *fb) {
 	};
 
 	fb_draw_triangle(fb, Nose, NoseColors);
-
 }
 
 int main() {
