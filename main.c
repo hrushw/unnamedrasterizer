@@ -166,24 +166,30 @@ i32x2 i32minmax3partial(i32 x, i32 y, i32 z) {
 }
 
 i32x2 i32minmax3(i32 x, i32 y, i32 z) {
-	if(x < y)
-		return i32minmax3partial(x, y, z);
-	else
-		return i32minmax3partial(y, x, z);
+	return (x < y)
+		? i32minmax3partial(x, y, z)
+		: i32minmax3partial(y, x, z)
+	;
+}
+
+UVec2x2 xy2x2restrict(UVec2 fbsz, i32x2 X, i32x2 Y) {
+	return (UVec2x2) {
+		{
+			i32restrict0(X.n0, fbsz.x),
+			i32restrict0(Y.n0, fbsz.y),
+		}, {
+			i32restrict0(X.n1, fbsz.x),
+			i32restrict0(Y.n1, fbsz.y),
+		},
+	};
 }
 
 UVec2x2 triangle_bound(UVec2 fbsz, Triangle S) {
-	i32x2 xmm = i32minmax3(S.r0.x, S.r1.x, S.r2.x);
-	i32x2 ymm = i32minmax3(S.r0.y, S.r1.y, S.r2.y);
-	return (UVec2x2) {
-		{
-			i32restrict0(xmm.n0, fbsz.x),
-			i32restrict0(ymm.n0, fbsz.y),
-		}, {
-			i32restrict0(xmm.n1, fbsz.x),
-			i32restrict0(ymm.n1, fbsz.y),
-		},
-	};
+	return xy2x2restrict(
+		fbsz,
+		i32minmax3(S.r0.x, S.r1.x, S.r2.x),
+		i32minmax3(S.r0.y, S.r1.y, S.r2.y)
+	);
 }
 
 UVec2x2 rect_bound(UVec2 fbsz, Rect S) {
