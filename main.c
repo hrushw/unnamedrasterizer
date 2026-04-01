@@ -212,32 +212,31 @@ UVec3B getlerpweights(i32 D, i32 D1, i32 D2) {
 }
 
 static
-bool checkptstatus_dr(i32 D, Vec2 dr, Vec2 dr1, Vec2 dr2) {
-	return checkptstatus(D, vec2det(dr1, dr), vec2det(dr, dr2));
-}
-
-static
 void fb_set_pix_lerped(Fbuf fb, UVec2 r, Vec3Pixel P, i32 D, i32 D1, i32 D2) {
 	if(checkptstatus(D, D1, D2))
 		fb_set_pix(fb, r, lerp(getlerpweights(D, D1, D2), P));
 }
 
-static
-void fb_set_pix_lerped_dr(Fbuf fb, UVec2 r, Vec3Pixel P, i32 D, Vec2 dr, Vec2 dr1, Vec2 dr2) {
-	fb_set_pix_lerped(fb, r, P, D, vec2det(dr1, dr), vec2det(dr, dr2));
-}
-
 void fb_draw_triangle(Fbuf fb, Pixel p, Vec2 r0, Vec2 r1, Vec2 r2) {
 	r1 = vec2sub(r1, r0);
 	r2 = vec2sub(r2, r0);
+
 	i32 D = vec2det(r1, r2);
+	i32 D1 = - vec2det(r0, r2);
+	i32 D2 = - vec2det(r1, r0);
 	if(!D) return;
 
 	UVec2 r;
-	for(r.y = 0; r.y < fb.sz.y; ++r.y)
-		for(r.x = 0; r.x < fb.sz.x; ++r.x)
-			if(checkptstatus_dr(D, uv2v2sub(r, r0), r1, r2))
+	for(r.y = 0; r.y < fb.sz.y; ++r.y) {
+		for(r.x = 0; r.x < fb.sz.x; ++r.x) {
+			if(checkptstatus(D, D1, D2))
 				fb_set_pix(fb, r, p);
+			D1 += r2.y;
+			D2 -= r1.y;
+		}
+		D1 = D1 - (fb.sz.x*r2.y) - r2.x;
+		D2 = D2 + (fb.sz.x*r1.y) + r1.x;
+	}
 }
 
 void fb_draw_quad(Fbuf fb, Quad S, Pixel p) {
@@ -258,13 +257,23 @@ void fb_draw_array_fan(Fbuf fb, Pixel p, size_t n, Vec2 *pts) {
 void fb_draw_triangle_lerped(Fbuf fb, Triangle S, Vec3Pixel P) {
 	S.r1 = vec2sub(S.r1, S.r0);
 	S.r2 = vec2sub(S.r2, S.r0);
+
 	i32 D = vec2det(S.r1, S.r2);
+	i32 D1 = - vec2det(S.r0, S.r2);
+	i32 D2 = - vec2det(S.r1, S.r0);
+
 	if(!D) return;
 
 	UVec2 r;
-	for(r.y = 0; r.y < fb.sz.y; ++r.y)
-		for(r.x = 0; r.x < fb.sz.x; ++r.x)
-			fb_set_pix_lerped_dr(fb, r, P, D, uv2v2sub(r, S.r0), S.r1, S.r2);
+	for(r.y = 0; r.y < fb.sz.y; ++r.y) {
+		for(r.x = 0; r.x < fb.sz.x; ++r.x) {
+			fb_set_pix_lerped(fb, r, P, D, D1, D2);
+			D1 += S.r2.y;
+			D2 -= S.r1.y;
+		}
+		D1 = D1 - (fb.sz.x*S.r2.y) - S.r2.x;
+		D2 = D2 + (fb.sz.x*S.r1.y) + S.r1.x;
+	}
 }
 
 static
