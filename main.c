@@ -6,12 +6,8 @@
 
 #include <time.h>
 
-#include <sys/ipc.h>
-#include <sys/shm.h>
-
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
-#include <X11/extensions/XShm.h>
 
 // TODO win32
 // TODO line drawing
@@ -118,32 +114,36 @@ i64 vec2det(Vec2 v0, Vec2 v1) {
 }
 
 /* Drawing functions */
-UVec2x2 rect_bound_uvec2x2(Fbuf fb, Rect S) {
-	UVec2x2 S_;
-	S_.r0.x = S.r0.x < 0 ? 0 : S.r0.x;
-	S_.r0.y = S.r0.y < 0 ? 0 : S.r0.y;
-
-	S.r0.x += S.sz.x;
-	S.r0.y += S.sz.y;
-
-	S_.r1.x = S.r0.x < 0 ? 0 : S.r0.x;
-	S_.r1.y = S.r0.y < 0 ? 0 : S.r0.y;
-
-	S_.r1.x = S_.r1.x > fb.sz.x ? fb.sz.x : S_.r1.x;
-	S_.r1.y = S_.r1.y > fb.sz.y ? fb.sz.y : S_.r1.y;
-
-	return S_;
+UVec2 rect_bound_min0(Vec2 r0) {
+	return (UVec2) {
+		r0.x < 0 ? 0 : (u32)r0.x,
+		r0.y < 0 ? 0 : (u32)r0.y,
+	};
 }
 
-void fb_draw_rect_uvec2x2(Fbuf fb, UVec2x2 S, Pixel p) {
+UVec2 rect_bound_max(Fbuf fb, Vec2 r0, UVec2 sz) {
+	return (UVec2) {(
+		r0.x += sz.x,
+		r0.x > (i32)fb.sz.x
+			? (i32)fb.sz.x
+			: r0.x < 0 ? 0 : r0.x
+	), (
+		r0.y += sz.y,
+		r0.y > (i32)fb.sz.y
+			? (i32)fb.sz.y
+			: r0.y < 0 ? 0 : r0.y
+	)};
+}
+
+void fb_draw_rect_uvec2x2(Fbuf fb, Pixel p, UVec2 r0, UVec2 r1) {
 	UVec2 r;
-	for(r.y = S.r0.y; r.y < S.r1.y; ++r.y)
-		for(r.x = S.r0.x; r.x < S.r1.x; ++r.x)
+	for(r.y = r0.y; r.y < r1.y; ++r.y)
+		for(r.x = r0.x; r.x < r1.x; ++r.x)
 			fb_set_pix(fb, r, p);
 }
 
-void fb_draw_rect(Fbuf fb, Rect S, Pixel p) {
-	fb_draw_rect_uvec2x2(fb, rect_bound_uvec2x2(fb, S), p);
+void fb_draw_rect(Fbuf fb, Pixel p, Vec2 r0, UVec2 sz) {
+	fb_draw_rect_uvec2x2(fb, p, rect_bound_min0(r0), rect_bound_max(fb, r0, sz));
 }
 
 static inline
@@ -195,14 +195,6 @@ void fb_draw_polygon_strip(Fbuf fb, Pixel p, size_t n, Vec2 *pts) {
 void fb_draw_polygon_fan(Fbuf fb, Pixel p, size_t n, Vec2 *pts) {
 	for(size_t i = 0; i < n-2; ++i)
 		fb_draw_triangle(fb, p, pts[0], pts[i+1], pts[i+2]);
-}
-
-static
-Rect fb_mirror_rect_x(Fbuf fb, Rect R) {
-	return (Rect) {
-		{ (i32)fb.sz.x - R.r0.x - R.sz.x, R.r0.y },
-		R.sz
-	};
 }
 
 /* framebuffer export functions (to X11 window or PPM file) */
@@ -376,14 +368,17 @@ void draw(Fbuf fb) {
 		{ fb.sz.x/4, 10*fb.sz.y/48 },
 	};
 	Pixel EyeLeftClr = 0x00FF00;
-	fb_draw_rect(fb, EyeLeft, EyeLeftClr);
+	fb_draw_rect(fb, EyeLeftClr, EyeLeft.r0, EyeLeft.sz);
 
-	Rect EyeRight = fb_mirror_rect_x(fb, EyeLeft);
+	Vec2 EyeRightOrigin = {
+		(i32)fb.sz.x - EyeLeft.r0.x - EyeLeft.sz.x,
+		EyeLeft.r0.y
+	};
 	Quad EyeRightQuad = {
-		EyeRight.r0,
-		{ EyeRight.r0.x - fb.sz.x/64, EyeRight.r0.y + EyeRight.sz.y },
-		{ EyeRight.r0.x + EyeRight.sz.x, EyeRight.r0.y + EyeRight.sz.y - fb.sz.x/32 },
-		{ EyeRight.r0.x + EyeRight.sz.x, EyeRight.r0.y },
+		EyeRightOrigin,
+		{ EyeRightOrigin.x - fb.sz.x/64,   EyeRightOrigin.y + EyeLeft.sz.y },
+		{ EyeRightOrigin.x + EyeLeft.sz.x, EyeRightOrigin.y + EyeLeft.sz.y - fb.sz.x/32 },
+		{ EyeRightOrigin.x + EyeLeft.sz.x, EyeRightOrigin.y },
 	};
 	Pixel EyeRightClr = 0x00CF3F;
 	fb_draw_quad(fb, EyeRightQuad, EyeRightClr);
@@ -421,13 +416,13 @@ void draw(Fbuf fb) {
 		{ 100, 200 }
 	};
 
-	fb_draw_rect(fb, outofboundrect, 0xFF00FF);
+	fb_draw_rect(fb, 0xFF00FF, outofboundrect.r0, outofboundrect.sz);
 
 	Rect Goatee = {
 		{ 7*fb.sz.x/16, 7*fb.sz.y/8 },
 		{ fb.sz.x/8, fb.sz.y/2 }
 	};
-	fb_draw_rect(fb, Goatee, 0xFFFFFF);
+	fb_draw_rect(fb, 0xFFFFFF, Goatee.r0, Goatee.sz);
 
 	Triangle BrowLeft = {
 		{ 5*fb.sz.x/32, (i32)fb.sz.y/12 },
