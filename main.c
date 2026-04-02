@@ -324,40 +324,8 @@ void handle_events_x(WinProps_X *wp) {
 	}
 }
 
-// TODO merge this function into draw() somehow
-void render_to_x_win_img(Fbuf fb, WinProps_X *wp) {
-	struct timespec dt = { 0, 16666667 };
-	Vec2 EyeballLeftOrigin = {fb.sz.x/16, 5*fb.sz.y/16};
-	u32 EyeballRadius = fb.sz.x/32;
-	Vec2 EyeballRightOrigin = EyeballLeftOrigin;
-	EyeballRightOrigin.x = fb.sz.x - EyeballLeftOrigin.x;
-	int dir = 1;
-
-	while(!wp->closed) {
-		// Eye motion logic
-		fb_draw_circle(fb, 0x00FF00, EyeballRadius, EyeballLeftOrigin);
-		fb_draw_circle(fb, 0x00CF3F, EyeballRadius, EyeballRightOrigin);
-		if(dir) EyeballLeftOrigin.x += 2; else EyeballLeftOrigin.x -= 2;
-		if(EyeballLeftOrigin.x > 9*(i32)fb.sz.x/32 - (i32)EyeballRadius)
-			EyeballLeftOrigin.x = 9*fb.sz.x/32 - (i32)EyeballRadius,
-			dir = 0;
-		else if(EyeballLeftOrigin.x < (i32)fb.sz.x/16)
-			EyeballLeftOrigin.x = fb.sz.x/16,
-			dir = 1;
-		EyeballRightOrigin.x = fb.sz.x - EyeballLeftOrigin.x;
-		fb_draw_circle(fb, 0x00007F, EyeballRadius, EyeballLeftOrigin);
-		fb_draw_circle(fb, 0x00007F, EyeballRadius, EyeballRightOrigin);
-
-		fbtoximg(fb, wp->img);
-		XPutImage(wp->disp, wp->win, DefaultGC(wp->disp, DefaultScreen(wp->disp)), wp->img, 0, 0, 0, 0, fb.sz.x, fb.sz.y);
-
-		nanosleep(&dt, NULL);
-		handle_events_x(wp);
-	}
-}
-
 /* Main drawing function */
-void draw(Fbuf fb) {
+void draw(Fbuf fb, WinProps_X *wp) {
 	Rect EyeLeft = {
 		{ fb.sz.x/32, 10*fb.sz.y/48 },
 		{ fb.sz.x/4, 10*fb.sz.y/48 },
@@ -427,6 +395,36 @@ void draw(Fbuf fb) {
 	Pixel BrowColor = 0x7F3F00;
 	fb_draw_triangle_arr(fb, BrowColor, BrowLeft);
 	fb_draw_triangle_arr(fb, BrowColor, BrowRight);
+
+	struct timespec dt = { 0, 16666667 };
+	Vec2 EyeballLeftOrigin = {fb.sz.x/16, 5*fb.sz.y/16};
+	u32 EyeballRadius = fb.sz.x/32;
+	Vec2 EyeballRightOrigin = EyeballLeftOrigin;
+	Pixel EyeballColor = 0x00007F;
+	EyeballRightOrigin.x = fb.sz.x - EyeballLeftOrigin.x;
+	int dir = 1;
+
+	while(!wp->closed) {
+		// Eye motion logic
+		fb_draw_circle(fb, EyeLeftClr, EyeballRadius, EyeballLeftOrigin);
+		fb_draw_circle(fb, EyeRightClr, EyeballRadius, EyeballRightOrigin);
+		if(dir) EyeballLeftOrigin.x += 2; else EyeballLeftOrigin.x -= 2;
+		if(EyeballLeftOrigin.x > 9*(i32)fb.sz.x/32 - (i32)EyeballRadius)
+			EyeballLeftOrigin.x = 9*fb.sz.x/32 - (i32)EyeballRadius,
+			dir = 0;
+		else if(EyeballLeftOrigin.x < (i32)fb.sz.x/16)
+			EyeballLeftOrigin.x = fb.sz.x/16,
+			dir = 1;
+		EyeballRightOrigin.x = fb.sz.x - EyeballLeftOrigin.x;
+		fb_draw_circle(fb, EyeballColor, EyeballRadius, EyeballLeftOrigin);
+		fb_draw_circle(fb, EyeballColor, EyeballRadius, EyeballRightOrigin);
+
+		fbtoximg(fb, wp->img);
+		XPutImage(wp->disp, wp->win, DefaultGC(wp->disp, DefaultScreen(wp->disp)), wp->img, 0, 0, 0, 0, fb.sz.x, fb.sz.y);
+
+		nanosleep(&dt, NULL);
+		handle_events_x(wp);
+	}
 }
 
 int main() {
@@ -441,14 +439,14 @@ int main() {
 	printf("%d %d\n", z1.x, z1.y);
 
 	Fbuf fb = { { WIDTH, HEIGHT }, fbufdata };
-	draw(fb);
 
 	WinProps_X wp = window_init_x(fb.sz.x, fb.sz.y);
 	if(wp.status == ERR_SUCCESS)
-		render_to_x_win_img(fb, &wp);
+		draw(fb, &wp);
 
 	window_cleanup_x(&wp);
 	render_to_ppm(fb);
 
 	return wp.status;
 }
+
