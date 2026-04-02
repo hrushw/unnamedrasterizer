@@ -228,11 +228,81 @@ typedef enum possible_errors_x_e {
 	ERR_IMG_FMT,
 } WinError_X;
 
+typedef enum window_init_stage_x_e {
+	STAGE_NONE = 0,
+	STAGE_DISPLAY,
+	STAGE_IMG
+} InitStage_X;
+
+typedef struct window_properties_x_t {
+	InitStage_X stage;
+	WinError_X status;
+	Display *disp;
+	Window win;
+	XWindowAttributes attrs;
+	XImage *img;
+} WinProps_X;
+
+void window_cleanup_x(WinProps_X wp) {
+	switch(wp.stage) {
+	case STAGE_IMG:
+		free(wp.img->data);
+		wp.img->data = NULL; // don't touch my data Xlib you disgusting creature, you did not allocate it
+		XDestroyImage(wp.img);
+	case STAGE_DISPLAY:
+			XCloseDisplay(wp.disp);
+	case STAGE_NONE:
+	default: break;
+	}
+}
+
 int handle_errors_x(Display *disp, XErrorEvent *err) {
 	(void)disp;
 	(void)err;
 	printf("X11 Error (unspecified due to laziness)\n");
 	return 0;
+}
+
+WinProps_X window_init_x(Fbuf fb) {
+	WinProps_X wp = { .stage = STAGE_NONE };
+	XSetErrorHandler(handle_errors_x);
+	wp.disp = XOpenDisplay(NULL);
+	if(!wp.disp) return wp.status = ERR_OPEN_DISPLAY, wp;
+	wp.stage = STAGE_DISPLAY;
+
+	XVisualInfo vinfo = {0};
+	if(!XMatchVisualInfo(wp.disp, DefaultScreen(wp.disp), 24, TrueColor, &vinfo))
+		return wp.status = ERR_GET_VISUAL, wp;
+
+	wp.win = XCreateSimpleWindow(
+		wp.disp, DefaultRootWindow(wp.disp),
+		0, 0, fb.sz.x, fb.sz.y, 0, 0,
+		BlackPixel(wp.disp, DefaultScreen(wp.disp))
+	);
+	XSelectInput(wp.disp, wp.win, StructureNotifyMask | ExposureMask | KeyPressMask | KeyReleaseMask);
+
+	if(!XGetWindowAttributes(wp.disp, wp.win, &wp.attrs))
+		return wp.status = ERR_GETWINATTRS, wp;
+	if(!XMapWindow(wp.disp, wp.win))
+		return wp.status = ERR_MAP_WIN, wp;
+
+	wp.img = XCreateImage(
+		wp.disp, wp.attrs.visual, wp.attrs.depth, ZPixmap, 0,
+		calloc(fb.sz.y*fb.sz.x, 4),
+		fb.sz.x, fb.sz.y, 32, 0
+	);
+	if(!wp.img) return wp.status = ERR_CR_IMG, wp;
+	wp.stage = STAGE_IMG;
+
+	if(!XInitImage(wp.img))
+		return wp.status = ERR_IMG_INIT, wp;
+	if(wp.img->bits_per_pixel != 32
+		|| wp.img->red_mask != 0xFF0000
+		|| wp.img->blue_mask != 0xFF
+		|| wp.img->green_mask != 0xFF00
+	) return wp.status = ERR_IMG_FMT, wp;
+
+	return wp;
 }
 
 /* X11 handling functions */
@@ -257,7 +327,7 @@ void render_to_x_win_img(
 	Fbuf fb, Display *disp, Window win,
 	XImage *img, long evmask
 ) {
-	struct timespec dt = { 0, 166666667 };
+	struct timespec dt = { 0, 16666667 };
 	Vec2 EyeballLeftOrigin = {fb.sz.x/16, 5*fb.sz.y/16};
 	u32 EyeballRadius = fb.sz.x/32;
 	Vec2 EyeballRightOrigin = EyeballLeftOrigin;
@@ -267,7 +337,7 @@ void render_to_x_win_img(
 		// Eye motion logic
 		fb_draw_circle(fb, 0x00FF00, EyeballRadius, EyeballLeftOrigin);
 		fb_draw_circle(fb, 0x00CF3F, EyeballRadius, EyeballRightOrigin);
-		if(dir) EyeballLeftOrigin.x += 10; else EyeballLeftOrigin.x -= 10;
+		if(dir) EyeballLeftOrigin.x += 2; else EyeballLeftOrigin.x -= 2;
 		if(EyeballLeftOrigin.x > 9*(i32)fb.sz.x/32 - (i32)EyeballRadius)
 			EyeballLeftOrigin.x = 9*fb.sz.x/32 - (i32)EyeballRadius,
 			dir = 0;
@@ -285,70 +355,14 @@ void render_to_x_win_img(
 	}
 }
 
-WinError_X render_to_x_win(
-	Fbuf fb, Display *disp, Window win,
-	long evmask, XImage *img
-) {
-	if(!XInitImage(img))
-		return ERR_IMG_INIT;
-	if(img->bits_per_pixel != 32
-		|| img->red_mask != 0xFF0000
-		|| img->blue_mask != 0xFF
-		|| img->green_mask != 0xFF00
-	) return ERR_IMG_FMT;
-
-	render_to_x_win_img(fb, disp, win, img, evmask);
-
-	return ERR_SUCCESS;
-}
-
-WinError_X render_to_x_disp(Fbuf fb, Display *disp) {
-	XVisualInfo vinfo = {0};
-	XWindowAttributes attrs;
-
-	if(!XMatchVisualInfo(disp, DefaultScreen(disp), 24, TrueColor, &vinfo))
-		return ERR_GET_VISUAL;
-
-	Window win = XCreateSimpleWindow(
-		disp, DefaultRootWindow(disp),
-		0, 0, fb.sz.x, fb.sz.y, 0, 0,
-		BlackPixel(disp, DefaultScreen(disp))
-	);
-	XSelectInput(disp, win, StructureNotifyMask | ExposureMask | KeyPressMask | KeyReleaseMask);
-
-	if(!XGetWindowAttributes(disp, win, &attrs))
-		return ERR_GETWINATTRS;
-	if(!XMapWindow(disp, win))
-		return ERR_MAP_WIN;
-
-	XImage *img = XCreateImage(
-		disp, attrs.visual, attrs.depth, ZPixmap, 0,
-		calloc(fb.sz.y*fb.sz.x, 4),
-		fb.sz.x, fb.sz.y, 32, 0
-	);
-	if(!img) return ERR_CR_IMG;
-
-	int ret = render_to_x_win(
-		fb, disp, win,
-		attrs.your_event_mask, img
-	);
-
-	free(img->data);
-	img->data = NULL; // don't touch my data Xlib you disgusting creature, you did not allocate it
-
-	XDestroyImage(img);
-	return ret;
-}
-
 WinError_X render_to_x(Fbuf fb) {
-	XSetErrorHandler(handle_errors_x);
-	Display *disp = XOpenDisplay(NULL);
-	if(!disp) return ERR_OPEN_DISPLAY;
+	WinProps_X wp = window_init_x(fb);
+	if(wp.status != ERR_SUCCESS) return wp.status;
 
-	int ret = render_to_x_disp(fb, disp);
+	render_to_x_win_img(fb, wp.disp, wp.win, wp.img, wp.attrs.your_event_mask);
 
-	XCloseDisplay(disp);
-	return ret;
+	window_cleanup_x(wp);
+	return wp.status;
 }
 
 /* Main drawing function */
