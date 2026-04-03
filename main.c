@@ -250,6 +250,10 @@ void window_cleanup_x(WinProps_X *wp) {
 	}
 }
 
+/* X11 errors are expected and normal
+ * the window may be destroyed just before XPutImage is called, resulting in an invalid operation
+ * setting this function as the error handler allows the program to continue in that case
+ * and perform necessary cleanup */
 static
 int handle_errors_x(Display *disp, XErrorEvent *err) {
 	(void)disp;
@@ -263,7 +267,8 @@ WinProps_X window_init_x(Fbuf fb) {
 	WinProps_X wp = { .stage = STAGE_NONE };
 	XSetErrorHandler(handle_errors_x);
 	wp.disp = XOpenDisplay(NULL);
-	if(!wp.disp) return wp.status = ERR_OPEN_DISPLAY, wp;
+	if(!wp.disp)
+		return wp.status = ERR_OPEN_DISPLAY, wp;
 	wp.stage = STAGE_DISPLAY;
 
 	XVisualInfo vinfo = {0};
@@ -283,6 +288,7 @@ WinProps_X window_init_x(Fbuf fb) {
 
 	if(!XGetWindowAttributes(wp.disp, wp.win, &wp.attrs))
 		return wp.status = ERR_GETWINATTRS, wp;
+
 	if(wp.attrs.visual->red_mask != 0xFF0000
 		|| wp.attrs.visual->green_mask != 0xFF00
 		|| wp.attrs.visual->blue_mask != 0xFF
@@ -316,6 +322,21 @@ WinProps_X window_init_x(Fbuf fb) {
 		return wp.status = ERR_IMG_INIT, wp;
 
 	return wp.status = ERR_SUCCESS, wp;
+}
+
+void get_time_diff(clockid_t clk, struct timespec *t) {
+	struct timespec end;
+	clock_gettime(clk, &end);
+	t->tv_sec = end.tv_sec - t->tv_sec;
+	if(t->tv_nsec > end.tv_nsec)
+		t->tv_nsec = end.tv_nsec + 1000000000 - t->tv_nsec;
+	else
+		t->tv_nsec = end.tv_nsec - t->tv_nsec;
+}
+
+void get_timespec_diff(struct timespec *t, u32 nsmax) {
+	if(t->tv_sec || t->tv_nsec > nsmax) t->tv_sec = t->tv_nsec = 0;
+	else t->tv_nsec = nsmax - t->tv_nsec;
 }
 
 /* Main drawing function */
@@ -391,7 +412,9 @@ void draw(Fbuf fb, WinProps_X *wp) {
 	fb_draw_triangle_arr(fb, BrowColor, BrowLeft);
 	fb_draw_triangle_arr(fb, BrowColor, BrowRight);
 
-	struct timespec dt = { 0, 16666667 };
+	enum { FRAME_NS = 16666667 };
+	struct timespec dt;
+
 	Vec2 EyeballLeftOrigin = {fb.sz.x/16, 5*fb.sz.y/16};
 	u32 EyeballRadius = fb.sz.x/32;
 	Vec2 EyeballRightOrigin = EyeballLeftOrigin;
@@ -399,6 +422,7 @@ void draw(Fbuf fb, WinProps_X *wp) {
 	EyeballRightOrigin.x = fb.sz.x - EyeballLeftOrigin.x;
 	int dir = 1;
 
+	clock_gettime(CLOCK_MONOTONIC, &dt);
 	while(!wp->closed) {
 		// Eye motion logic
 		fb_draw_circle(fb, EyeLeftClr, EyeballRadius, EyeballLeftOrigin);
@@ -416,8 +440,13 @@ void draw(Fbuf fb, WinProps_X *wp) {
 
 		XPutImage(wp->disp, wp->win, DefaultGC(wp->disp, DefaultScreen(wp->disp)), &wp->img, 0, 0, 0, 0, fb.sz.x, fb.sz.y);
 
-		// TODO more accurate sleep
+		get_time_diff(CLOCK_MONOTONIC, &dt);
+		get_timespec_diff(&dt, FRAME_NS);
+		// printf("0.%09ld s\r", dt.tv_nsec);
+		// fflush(stdout);
+
 		nanosleep(&dt, NULL);
+		clock_gettime(CLOCK_MONOTONIC, &dt);
 
 		XEvent ev;
 		while(XCheckWindowEvent(wp->disp, wp->win, wp->attrs.your_event_mask, &ev))
