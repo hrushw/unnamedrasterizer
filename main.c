@@ -135,33 +135,61 @@ int checkptstatus(i64 D, i64 D1, i64 D2) {
 	return (D1 < 0 || D2 < 0 || (u64)D1 + (u64)D2 > (u64)D);
 }
 
-// TODO bounds checking
 static
-void fb_draw_triangle(Fbuf fb, Pixel p, Vec2 r0, Vec2 r1, Vec2 r2) {
-	Vec2 rbegin = {280, 140};
-	Vec2 rend = {520, 360};
-
+void fb_draw_triangle_bounded(Fbuf fb, Pixel p, UVec2 B0, UVec2 B1, Vec2 r0, Vec2 r1, Vec2 r2) {
 	i64 D1 = - vec2det(r0, r2);
 	i64 D2 = - vec2det(r1, r0);
 	i64 D = vec2det(r1, r2) + D1 + D2;
 	if(!D) return;
 
-	D1 += vec2det(rbegin, r2);
-	D2 += vec2det(r1, rbegin);
+	D1 += (i64)B0.x*r2.y - (i64)B0.y*r2.x;
+	D2 += r1.x*(i64)B0.y - r1.y*(i64)B0.x;
 
-	D1 -= vec2det(rbegin, r0);
-	D2 -= vec2det(r0, rbegin);
+	D1 -= (i64)B0.x*r0.y - (i64)B0.y*r0.x;
+	D2 += (i64)B0.x*r0.y - (i64)B0.y*r0.x;
 
 	r1.y -= r0.y;
 	r2.y -= r0.y;
-	r1.x += (rend.x-rbegin.x)*r1.y - r0.x;
-	r2.x += (rend.x-rbegin.x)*r2.y - r0.x;
+	r1.x += (B1.x-B0.x)*r1.y - r0.x;
+	r2.x += (B1.x-B0.x)*r2.y - r0.x;
 
 	UVec2 r;
-	for(r.y = rbegin.y; r.y < rend.y; ++r.y, D1 -= r2.x, D2 += r1.x)
-		for(r.x = rbegin.x; r.x < rend.x; ++r.x, D1 += r2.y, D2 -= r1.y)
+	for(r.y = B0.y; r.y < B1.y; ++r.y, D1 -= r2.x, D2 += r1.x)
+		for(r.x = B0.x; r.x < B1.x; ++r.x, D1 += r2.y, D2 -= r1.y)
 			if(!checkptstatus(D, D1, D2))
 				fb_set_pix(fb, r, p);
+}
+
+static
+UVec2 triangle_bound_min(Vec2 r0, Vec2 r1, Vec2 r2) {
+	return (UVec2) {
+		i32min0(r0.x < r1.x
+			? (r0.x < r2.x ? r0.x : (r1.x < r2.x ? r1.x : r2.x))
+			: (r1.x < r2.x ? r1.x : (r0.x < r2.x ? r0.x : r2.x))),
+		i32min0(r0.y < r1.y
+			? (r0.y < r2.y ? r0.y : (r1.y < r2.y ? r1.y : r2.y))
+			: (r1.y < r2.y ? r1.y : (r0.y < r2.y ? r0.y : r2.y))),
+	};
+}
+
+static
+UVec2 triangle_bound_max(UVec2 sz, Vec2 r0, Vec2 r1, Vec2 r2) {
+	return (UVec2) {
+		i32minmax0(sz.x, r0.x > r1.x
+			? (r0.x > r2.x ? r0.x : (r1.x > r2.x ? r1.x : r2.x))
+			: (r1.x > r2.x ? r1.x : (r0.x > r2.x ? r0.x : r2.x))),
+		i32minmax0(sz.y, r0.y > r1.y
+			? (r0.y > r2.y ? r0.y : (r1.y > r2.y ? r1.y : r2.y))
+			: (r1.y > r2.y ? r1.y : (r0.y > r2.y ? r0.y : r2.y))),
+	};
+}
+
+// TODO bounds checking
+static
+void fb_draw_triangle(Fbuf fb, Pixel p, Vec2 r0, Vec2 r1, Vec2 r2) {
+	UVec2 rbegin = triangle_bound_min(r0, r1, r2);
+	UVec2 rend = triangle_bound_max(fb.sz, r0, r1, r2);
+	fb_draw_triangle_bounded(fb, p, rbegin, rend, r0, r1, r2);
 }
 
 static
