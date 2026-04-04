@@ -412,7 +412,7 @@ void handle_events_x(WinProps_X *wp) {
 		}
 }
 
-const u64 font_H = 0x4242427E42424242;
+const u64 font_H = 0x424242427E424242;
 const u64 font_E = 0x7E0202021E02027E;
 const u64 font_L = 0x7E02020202020202;
 const u64 font_O = 0x3C4242424242423C;
@@ -491,10 +491,36 @@ void draw(Fbuf fb, WinProps_X *wp) {
 		{13*fb.sz.x/16, fb.sz.y/2},
 	};
 
-	Triangle Nose = {
+	Vec2 Nose[] = {
+		{7*fb.sz.x/16, 3*fb.sz.y/8},
+		{15*fb.sz.x/32, 7*fb.sz.y/16},
 		{fb.sz.x/2, fb.sz.y/3},
-		{13*fb.sz.x/32, 7*fb.sz.y/16},
-		{19*fb.sz.x/32, 7*fb.sz.y/16},
+		{17*fb.sz.x/32, 7*fb.sz.y/16},
+		{9*fb.sz.x/16, 3*fb.sz.y/8},
+	};
+
+	Vec2 Teeth[] = {
+		{ 7*fb.sz.x/32, fb.sz.y/2},
+		{17*fb.sz.x/64, 5*fb.sz.y/8},
+		{10*fb.sz.x/32, fb.sz.y/2},
+		{23*fb.sz.x/64, 5*fb.sz.y/8},
+		{13*fb.sz.x/32, fb.sz.y/2},
+		{29*fb.sz.x/64, 5*fb.sz.y/8},
+		{16*fb.sz.x/32, fb.sz.y/2},
+		{35*fb.sz.x/64, 5*fb.sz.y/8},
+		{19*fb.sz.x/32, fb.sz.y/2},
+		{41*fb.sz.x/64, 5*fb.sz.y/8},
+		{22*fb.sz.x/32, fb.sz.y/2},
+		{47*fb.sz.x/64, 5*fb.sz.y/8},
+		{25*fb.sz.x/32, fb.sz.y/2},
+	};
+	u32 ToothIndices[] = {
+		0, 1, 2,
+		2, 3, 4,
+		4, 5, 6,
+		6, 7, 8,
+		8, 9, 10,
+		10, 11, 12
 	};
 
 	Rect Goatee = {
@@ -535,7 +561,8 @@ void draw(Fbuf fb, WinProps_X *wp) {
 		fb_draw_rect(fb, 0x00FF00, EyeLeft.r0, EyeLeft.sz);
 		fb_draw_quad(fb, 0x00CF3F, EyeRight);
 		fb_draw_polygon_fan(fb, 0xFF0000, sizeof(Smilepts)/sizeof(Vec2), Smilepts);
-		fb_draw_triangle_arr(fb, 0xFFFF00, Nose);
+		fb_draw_polygon_strip(fb, 0xFFFF00, sizeof(Nose)/sizeof(Vec2), Nose);
+		fb_draw_triangles_indexed(fb, 0xEFEFCF, sizeof(ToothIndices)/sizeof(u32), ToothIndices, Teeth);
 		fb_draw_rect(fb, 0xFF00FF, (Vec2) {-200, -300}, (UVec2) {100, 200});
 		fb_draw_rect(fb, 0xFFFFFF, Goatee.r0, Goatee.sz);
 		fb_draw_triangles(fb, 0x7F3F00, 6, Brows);
